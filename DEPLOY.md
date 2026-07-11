@@ -60,7 +60,11 @@ npm run deploy
 
 ## 2. 運営チームへの共有（URL のみ）
 
-デプロイ後に表示される URL（例: `https://icl-project-hub.vercel.app`）を共有します。
+デプロイ後に表示される URL を運営に共有します。
+
+**本番URL（運営チーム用）:** https://icl-project-lilac.vercel.app
+
+> `https://icl-project.vercel.app` は別プロジェクトです。共有は **lilac** の URL を使ってください。
 
 **共有するもの**
 

@@ -50,6 +50,18 @@ function getCategoryStyle(category: string | null, index: number) {
   return TASK_ACCENTS[index % TASK_ACCENTS.length];
 }
 
+function toErrorMessage(error: unknown, fallback: string): string {
+  if (error instanceof Error) {
+    return error.message;
+  }
+
+  if (typeof error === "string") {
+    return error;
+  }
+
+  return fallback;
+}
+
 function formatErrorMessage(message: string): string {
   if (message.includes("shared with your integration")) {
     return "Notion の Project データベースが API 連携と共有されていません。Notion でデータベースを開き、「…」→「コネクト」から連携を追加してください。";
@@ -141,14 +153,19 @@ function CheckboxProperty({
   label: string;
   checked: boolean;
   disabled?: boolean;
-  onChange: (checked: boolean) => void;
+  onChange: (checked: boolean) => void | Promise<void>;
 }) {
   return (
     <PropertyRow label={label}>
       <button
         type="button"
         disabled={disabled}
-        onClick={() => onChange(!checked)}
+        onClick={(event) => {
+          event.stopPropagation();
+          void Promise.resolve(onChange(!checked)).catch((error) => {
+            console.error("[TaskDetailModal] checkbox update failed", error);
+          });
+        }}
         className="inline-flex items-center gap-2 rounded-md px-1 py-0.5 transition-colors hover:bg-slate-50 disabled:cursor-wait disabled:opacity-60"
         aria-pressed={checked}
       >
@@ -449,7 +466,7 @@ export default function DashboardPage() {
       setLoadState("error");
       setErrorMessage(
         formatErrorMessage(
-          error instanceof Error ? error.message : "Failed to load tasks",
+          toErrorMessage(error, "Failed to load tasks"),
         ),
       );
     }
@@ -485,9 +502,7 @@ export default function DashboardPage() {
       setData(nextData);
       setSelectedTask(updatedTask);
     } catch (error) {
-      setSaveError(
-        error instanceof Error ? error.message : "Failed to update task",
-      );
+      setSaveError(toErrorMessage(error, "Failed to update task"));
     } finally {
       setSavingTask(false);
     }
@@ -615,7 +630,9 @@ export default function DashboardPage() {
             setSelectedTask(null);
             setSaveError(null);
           }}
-          onUpdate={handleTaskUpdate}
+          onUpdate={async (changes) => {
+            await handleTaskUpdate(changes);
+          }}
         />
       )}
     </main>
