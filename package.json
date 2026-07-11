@@ -1,0 +1,24 @@
+{
+  "scripts": {
+    "dev": "next dev",
+    "dev:clean": "lsof -ti :3000 | xargs kill -9 2>/dev/null || true; rm -rf .next && next dev",
+    "build": "next build",
+    "start": "next start",
+    "deploy": "vercel --prod"
+  },
+  "dependencies": {
+    "@notionhq/client": "^5.23.0",
+    "next": "^15.3.5",
+    "react": "^19.1.0",
+    "react-dom": "^19.1.0"
+  },
+  "devDependencies": {
+    "@tailwindcss/postcss": "^4.3.2",
+    "@types/node": "^22.15.32",
+    "@types/react": "^19.1.8",
+    "autoprefixer": "^10.5.2",
+    "postcss": "^8.5.16",
+    "tailwindcss": "^4.3.2",
+    "typescript": "^5.8.3"
+  }
+}
