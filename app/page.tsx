@@ -2,6 +2,7 @@
 
 import { FormEvent, useCallback, useEffect, useState, type ReactNode } from "react";
 import type { ProjectTask, TasksApiResponse } from "@/lib/notion/project-schema";
+import { normalizeTasksResponse, partitionTasks } from "@/lib/notion/task-filters";
 
 type LoadState = "loading" | "success" | "error";
 
@@ -23,6 +24,15 @@ const TASK_ACCENTS = [
 ] as const;
 
 const AGENDA_ICONS = ["💡", "🚀", "💻", "🗣️", "📋"] as const;
+
+function formatShortDueDate(date: string | null): string {
+  if (!date) return "—";
+
+  return new Intl.DateTimeFormat("en-US", {
+    month: "short",
+    day: "numeric",
+  }).format(new Date(`${date}T12:00:00`));
+}
 
 function formatDueDate(date: string | null): string {
   if (!date) return "No due date";
@@ -78,36 +88,39 @@ function formatErrorMessage(message: string): string {
   return message;
 }
 
+function buildTasksResponse(allTasks: ProjectTask[], meta: TasksApiResponse["meta"]): TasksApiResponse {
+  const { thisWeekTasks, meetingAgenda } = partitionTasks(allTasks);
+
+  return {
+    allTasks,
+    thisWeekTasks,
+    meetingAgenda,
+    meta: {
+      ...meta,
+      allTasksCount: allTasks.length,
+      thisWeekTasksCount: thisWeekTasks.length,
+      meetingAgendaCount: meetingAgenda.length,
+    },
+  };
+}
+
 function mergeTaskLists(
   data: TasksApiResponse,
   updatedTask: ProjectTask,
 ): TasksApiResponse {
-  const upsert = (tasks: ProjectTask[]) => {
-    const index = tasks.findIndex((task) => task.id === updatedTask.id);
-    if (index === -1) return tasks;
-    const next = [...tasks];
-    next[index] = updatedTask;
-    return next;
-  };
-
-  const dueInSevenDaysTasks = upsert(data.thisWeekTasks).filter((task) => !task.done);
-  const meetingAgendaBase = upsert(data.meetingAgenda).filter(
-    (task) => task.id !== updatedTask.id,
+  const allTasks = (data.allTasks ?? []).map((task) =>
+    task.id === updatedTask.id ? updatedTask : task,
   );
-  const meetingAgenda = updatedTask.discussInMeeting
-    ? [...meetingAgendaBase, updatedTask]
-    : meetingAgendaBase;
 
-  return {
-    ...data,
-    thisWeekTasks: dueInSevenDaysTasks,
-    meetingAgenda,
-    meta: {
-      ...data.meta,
-      thisWeekTasksCount: dueInSevenDaysTasks.length,
-      meetingAgendaCount: meetingAgenda.length,
-    },
-  };
+  return buildTasksResponse(allTasks, data.meta);
+}
+
+function appendTask(data: TasksApiResponse, newTask: ProjectTask): TasksApiResponse {
+  const allTasks = [...(data.allTasks ?? []), newTask].sort((left, right) =>
+    left.title.localeCompare(right.title, "en"),
+  );
+
+  return buildTasksResponse(allTasks, data.meta);
 }
 
 function StatusLabel({ state }: { state: LoadState }) {
@@ -435,12 +448,60 @@ function SectionHeader({
   );
 }
 
+function AllTasksTable({
+  tasks,
+  onOpen,
+}: {
+  tasks: ProjectTask[];
+  onOpen: (task: ProjectTask) => void;
+}) {
+  return (
+    <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white">
+      <table className="min-w-full text-left text-sm">
+        <thead>
+          <tr className="border-b border-slate-100 text-[11px] tracking-[0.12em] text-slate-400 uppercase">
+            <th className="px-4 py-3 font-medium">Task</th>
+            <th className="px-3 py-3 font-medium">Due</th>
+            <th className="px-3 py-3 font-medium text-center">Done</th>
+            <th className="px-4 py-3 font-medium text-center">Agenda</th>
+          </tr>
+        </thead>
+        <tbody>
+          {tasks.map((task) => (
+            <tr key={task.id} className="border-b border-slate-50 last:border-0">
+              <td className="px-4 py-3">
+                <button
+                  type="button"
+                  onClick={() => onOpen(task)}
+                  className="max-w-[28rem] truncate text-left font-medium text-slate-800 transition-colors hover:text-blue-600"
+                >
+                  {task.title || "Untitled"}
+                </button>
+              </td>
+              <td className="px-3 py-3 whitespace-nowrap text-slate-500">
+                {formatShortDueDate(task.dueDate)}
+              </td>
+              <td className="px-3 py-3 text-center text-slate-500">
+                {task.done ? "✓" : "—"}
+              </td>
+              <td className="px-4 py-3 text-center text-slate-500">
+                {task.discussInMeeting ? "✓" : "—"}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
 export default function DashboardPage() {
   const [loadState, setLoadState] = useState<LoadState>("loading");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [data, setData] = useState<TasksApiResponse | null>(null);
   const [draftTitle, setDraftTitle] = useState("");
   const [formMessage, setFormMessage] = useState<string | null>(null);
+  const [isAddingTask, setIsAddingTask] = useState(false);
   const [selectedTask, setSelectedTask] = useState<ProjectTask | null>(null);
   const [savingTask, setSavingTask] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
@@ -459,7 +520,7 @@ export default function DashboardPage() {
         throw new Error(body?.error ?? `Request failed (${response.status})`);
       }
 
-      const json = (await response.json()) as TasksApiResponse;
+      const json = normalizeTasksResponse((await response.json()) as TasksApiResponse);
       setData(json);
       setLoadState("success");
     } catch (error) {
@@ -508,15 +569,41 @@ export default function DashboardPage() {
     }
   }
 
-  function handleAddTask(event: FormEvent<HTMLFormElement>) {
+  async function handleAddTask(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
 
     const title = draftTitle.trim();
-    if (!title) return;
+    if (!title || !data || isAddingTask) return;
 
-    setFormMessage(`「${title}」をキャプチャしました（Notion 同期は今後対応予定）`);
-    setDraftTitle("");
-    window.setTimeout(() => setFormMessage(null), 4000);
+    setIsAddingTask(true);
+    setFormMessage(null);
+
+    try {
+      const response = await fetch("/api/tasks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title }),
+      });
+
+      if (!response.ok) {
+        const body = (await response.json().catch(() => null)) as {
+          error?: string;
+        } | null;
+        throw new Error(body?.error ?? `Create failed (${response.status})`);
+      }
+
+      const createdTask = (await response.json()) as ProjectTask;
+      setData(appendTask(data, createdTask));
+      setDraftTitle("");
+      setFormMessage(`「${title}」を Notion に追加しました`);
+    } catch (error) {
+      setFormMessage(
+        formatErrorMessage(toErrorMessage(error, "Failed to add task")),
+      );
+    } finally {
+      setIsAddingTask(false);
+      window.setTimeout(() => setFormMessage(null), 4000);
+    }
   }
 
   return (
@@ -607,17 +694,34 @@ export default function DashboardPage() {
                   value={draftTitle}
                   onChange={(event) => setDraftTitle(event.target.value)}
                   placeholder="Quickly add a task..."
-                  className="w-full rounded-full border-0 bg-white px-6 py-4 text-sm text-slate-700 placeholder:text-slate-400 outline-none focus:ring-2 focus:ring-blue-100/80"
+                  disabled={isAddingTask || loadState !== "success"}
+                  className="w-full rounded-full border-0 bg-white px-6 py-4 text-sm text-slate-700 placeholder:text-slate-400 outline-none focus:ring-2 focus:ring-blue-100/80 disabled:cursor-wait disabled:opacity-60"
                 />
               </div>
             </form>
 
             {formMessage && (
-              <p className="mt-4 text-center text-xs text-slate-400">
+              <p
+                className={`mt-4 text-center text-xs ${
+                  formMessage.includes("追加しました") ? "text-teal-600" : "text-slate-400"
+                }`}
+              >
                 {formMessage}
               </p>
             )}
           </div>
+        </section>
+
+        <section className="mt-12 sm:mt-16">
+          <SectionHeader icon="📋" title="All Projects" />
+
+          {loadState === "loading" ? (
+            <div className="h-48 animate-pulse rounded-xl border border-slate-200 bg-white/80" />
+          ) : data && (data.allTasks?.length ?? 0) > 0 ? (
+            <AllTasksTable tasks={data.allTasks ?? []} onOpen={setSelectedTask} />
+          ) : (
+            <EmptyState message="No project tasks yet" />
+          )}
         </section>
       </div>
 

@@ -41,10 +41,12 @@ export interface ProjectTask {
 }
 
 export interface TasksApiResponse {
+  allTasks: ProjectTask[];
   thisWeekTasks: ProjectTask[];
   meetingAgenda: ProjectTask[];
   meta: {
     fetchedAt: string;
+    allTasksCount: number;
     thisWeekTasksCount: number;
     meetingAgendaCount: number;
     databaseId: string;
