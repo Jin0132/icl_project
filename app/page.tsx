@@ -89,15 +89,19 @@ function formatErrorMessage(message: string): string {
 }
 
 function buildTasksResponse(allTasks: ProjectTask[], meta: TasksApiResponse["meta"]): TasksApiResponse {
-  const { thisWeekTasks, meetingAgenda } = partitionTasks(allTasks);
+  const {
+    allTasks: activeTasks,
+    thisWeekTasks,
+    meetingAgenda,
+  } = partitionTasks(allTasks);
 
   return {
-    allTasks,
+    allTasks: activeTasks,
     thisWeekTasks,
     meetingAgenda,
     meta: {
       ...meta,
-      allTasksCount: allTasks.length,
+      allTasksCount: activeTasks.length,
       thisWeekTasksCount: thisWeekTasks.length,
       meetingAgendaCount: meetingAgenda.length,
     },
@@ -197,6 +201,52 @@ function CheckboxProperty({
   );
 }
 
+function DoneConfirmDialog({
+  taskTitle,
+  saving,
+  onCancel,
+  onConfirm,
+}: {
+  taskTitle: string;
+  saving: boolean;
+  onCancel: () => void;
+  onConfirm: () => void | Promise<void>;
+}) {
+  return (
+    <div className="absolute inset-0 z-10 flex items-center justify-center bg-white/90 p-6 backdrop-blur-[1px]">
+      <div className="w-full max-w-md rounded-xl border border-amber-200 bg-amber-50/80 p-5 shadow-sm">
+        <p className="text-sm font-semibold text-amber-900">Doneにしますか？</p>
+        <p className="mt-2 text-sm leading-relaxed text-amber-900/90">
+          今後この課題はここでは表示されません。復元には Notion から直接チェックを外してください。
+        </p>
+        <p className="mt-3 truncate text-xs text-amber-800/70">{taskTitle}</p>
+        <div className="mt-5 flex justify-end gap-2">
+          <button
+            type="button"
+            disabled={saving}
+            onClick={onCancel}
+            className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm text-slate-600 transition-colors hover:bg-slate-50 disabled:cursor-wait disabled:opacity-60"
+          >
+            キャンセル
+          </button>
+          <button
+            type="button"
+            disabled={saving}
+            onClick={() => {
+              void Promise.resolve(onConfirm()).catch((error) => {
+                console.error("[DoneConfirmDialog] confirm failed", error);
+              });
+            }}
+            className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:cursor-wait disabled:opacity-60"
+          >
+            {saving ? "処理中…" : "Doneにする"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function TaskDetailModal({
   task,
   saving,
@@ -208,8 +258,9 @@ function TaskDetailModal({
   saving: boolean;
   saveError: string | null;
   onClose: () => void;
-  onUpdate: (changes: UpdateTaskBody) => Promise<void>;
+  onUpdate: (changes: UpdateTaskBody) => Promise<boolean>;
 }) {
+  const [showDoneConfirm, setShowDoneConfirm] = useState(false);
   useEffect(() => {
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === "Escape") onClose();
@@ -240,6 +291,20 @@ function TaskDetailModal({
         aria-labelledby="task-detail-title"
         className={`relative flex max-h-[min(90vh,calc(100dvh-2rem))] w-full max-w-2xl flex-col overflow-hidden rounded-2xl border border-slate-200 bg-white ${CARD_SHADOW}`}
       >
+        {showDoneConfirm && (
+          <DoneConfirmDialog
+            taskTitle={task.title || "Untitled"}
+            saving={saving}
+            onCancel={() => setShowDoneConfirm(false)}
+            onConfirm={async () => {
+              const closed = await onUpdate({ done: true });
+              if (closed) {
+                setShowDoneConfirm(false);
+              }
+            }}
+          />
+        )}
+
         <div className="flex shrink-0 items-start justify-between gap-4 border-b border-slate-100 px-6 py-5">
           <div className="min-w-0">
             <p className="text-[11px] font-semibold tracking-[0.14em] text-slate-400 uppercase">
@@ -282,14 +347,20 @@ function TaskDetailModal({
             label="Next Meeting Agenda"
             checked={task.discussInMeeting}
             disabled={saving}
-            onChange={(checked) => onUpdate({ discussInMeeting: checked })}
+            onChange={(checked) => {
+              void onUpdate({ discussInMeeting: checked });
+            }}
           />
 
           <CheckboxProperty
             label="Done"
             checked={task.done}
-            disabled={saving}
-            onChange={(checked) => onUpdate({ done: checked })}
+            disabled={saving || showDoneConfirm}
+            onChange={(checked) => {
+              if (checked) {
+                setShowDoneConfirm(true);
+              }
+            }}
           />
 
           <PropertyRow label="Person in charge">
@@ -537,8 +608,8 @@ export default function DashboardPage() {
     fetchTasks();
   }, [fetchTasks]);
 
-  async function handleTaskUpdate(changes: UpdateTaskBody) {
-    if (!selectedTask || !data) return;
+  async function handleTaskUpdate(changes: UpdateTaskBody): Promise<boolean> {
+    if (!selectedTask || !data) return false;
 
     setSavingTask(true);
     setSaveError(null);
@@ -561,9 +632,18 @@ export default function DashboardPage() {
       const nextData = mergeTaskLists(data, updatedTask);
 
       setData(nextData);
+
+      if (changes.done) {
+        setSelectedTask(null);
+        setSaveError(null);
+        return true;
+      }
+
       setSelectedTask(updatedTask);
+      return false;
     } catch (error) {
       setSaveError(toErrorMessage(error, "Failed to update task"));
+      return false;
     } finally {
       setSavingTask(false);
     }
@@ -734,9 +814,7 @@ export default function DashboardPage() {
             setSelectedTask(null);
             setSaveError(null);
           }}
-          onUpdate={async (changes) => {
-            await handleTaskUpdate(changes);
-          }}
+          onUpdate={handleTaskUpdate}
         />
       )}
     </main>

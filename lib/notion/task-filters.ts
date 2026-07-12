@@ -23,14 +23,21 @@ export function isDueInSevenDays(task: ProjectTask, now = new Date()): boolean {
   return due >= today && due <= end;
 }
 
+export function isActiveTask(task: ProjectTask): boolean {
+  return !task.done;
+}
+
 export function isMeetingAgenda(task: ProjectTask): boolean {
-  return task.discussInMeeting;
+  return task.discussInMeeting && isActiveTask(task);
 }
 
 export function partitionTasks(allTasks: ProjectTask[]) {
+  const activeTasks = allTasks.filter(isActiveTask);
+
   return {
-    thisWeekTasks: allTasks.filter((task) => isDueInSevenDays(task)),
-    meetingAgenda: allTasks.filter(isMeetingAgenda),
+    allTasks: activeTasks,
+    thisWeekTasks: activeTasks.filter((task) => isDueInSevenDays(task)),
+    meetingAgenda: activeTasks.filter(isMeetingAgenda),
   };
 }
 
@@ -39,7 +46,7 @@ export function normalizeTasksResponse(
     Pick<TasksApiResponse, "thisWeekTasks" | "meetingAgenda" | "meta">,
 ): TasksApiResponse {
   if (Array.isArray(json.allTasks)) {
-    return json as TasksApiResponse;
+    return buildTasksResponseFromPartitions(json.allTasks, json);
   }
 
   const byId = new Map<string, ProjectTask>();
@@ -51,15 +58,28 @@ export function normalizeTasksResponse(
     left.title.localeCompare(right.title, "en"),
   );
 
+  return buildTasksResponseFromPartitions(allTasks, json);
+}
+
+function buildTasksResponseFromPartitions(
+  allTasks: ProjectTask[],
+  json: Pick<TasksApiResponse, "meta">,
+): TasksApiResponse {
+  const {
+    allTasks: activeTasks,
+    thisWeekTasks,
+    meetingAgenda,
+  } = partitionTasks(allTasks);
+
   return {
-    allTasks,
-    thisWeekTasks: json.thisWeekTasks,
-    meetingAgenda: json.meetingAgenda,
+    allTasks: activeTasks,
+    thisWeekTasks,
+    meetingAgenda,
     meta: {
       ...json.meta,
-      allTasksCount: allTasks.length,
-      thisWeekTasksCount: json.thisWeekTasks.length,
-      meetingAgendaCount: json.meetingAgenda.length,
+      allTasksCount: activeTasks.length,
+      thisWeekTasksCount: thisWeekTasks.length,
+      meetingAgendaCount: meetingAgenda.length,
     },
   };
 }

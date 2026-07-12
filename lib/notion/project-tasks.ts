@@ -62,15 +62,16 @@ export async function fetchTasksResponse(): Promise<TasksApiResponse> {
   const dataSourceId = await resolveProjectDataSourceId();
   const pages = await queryAllProjectPages(dataSourceId);
   const allTasks = pages.map(parseProjectTask);
-  const { thisWeekTasks, meetingAgenda } = partitionTasks(allTasks);
+  const { allTasks: activeTasks, thisWeekTasks, meetingAgenda } =
+    partitionTasks(allTasks);
 
   return {
-    allTasks,
+    allTasks: activeTasks,
     thisWeekTasks,
     meetingAgenda,
     meta: {
       fetchedAt: new Date().toISOString(),
-      allTasksCount: allTasks.length,
+      allTasksCount: activeTasks.length,
       thisWeekTasksCount: thisWeekTasks.length,
       meetingAgendaCount: meetingAgenda.length,
       databaseId,
