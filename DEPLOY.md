@@ -30,6 +30,8 @@ Notion Project データベース
 |------|-----|------|
 | `NOTION_API_KEY` | `.env.local` と同じ値 | ✅ |
 | `NOTION_DATABASE_ID` | Project DB の ID | ✅ |
+| `NOTION_SCHEDULE_DRAFT_DATABASE_ID` | Schedule Drafts DB の ID | ✅ |
+| `NOTION_CALENDAR_DATABASE_ID` | Calendar of availability DB の ID | ✅ |
 | `SITE_PASSWORD` | 運営チーム用の共有パスワード | 推奨 |
 
 `SITE_PASSWORD` を設定すると、ブラウザがログインを求めます。

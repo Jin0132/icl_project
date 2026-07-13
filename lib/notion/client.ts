@@ -29,3 +29,27 @@ export function getProjectDatabaseId(): string {
 export function getProjectDataSourceId(): string | null {
   return process.env.NOTION_DATA_SOURCE_ID ?? null;
 }
+
+export function getScheduleDraftDatabaseId(): string {
+  const databaseId = process.env.NOTION_SCHEDULE_DRAFT_DATABASE_ID;
+
+  if (!databaseId) {
+    throw new Error(
+      "NOTION_SCHEDULE_DRAFT_DATABASE_ID is not set in environment variables",
+    );
+  }
+
+  return databaseId;
+}
+
+export function getCalendarDatabaseId(): string {
+  const databaseId = process.env.NOTION_CALENDAR_DATABASE_ID;
+
+  if (!databaseId) {
+    throw new Error(
+      "NOTION_CALENDAR_DATABASE_ID is not set in environment variables",
+    );
+  }
+
+  return databaseId;
+}

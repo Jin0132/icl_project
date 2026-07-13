@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { FormEvent, useCallback, useEffect, useState, type ReactNode } from "react";
 import type { ProjectTask, TasksApiResponse } from "@/lib/notion/project-schema";
 import { normalizeTasksResponse, partitionTasks } from "@/lib/notion/task-filters";
@@ -690,6 +691,14 @@ export default function DashboardPage() {
     <main className="min-h-screen px-4 py-10 sm:px-6 sm:py-14">
       <div className="mx-auto max-w-5xl">
         <header className="mb-10 text-center sm:mb-12">
+          <div className="mb-4 flex justify-center">
+            <Link
+              href="/schedule"
+              className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm text-slate-600 transition-colors hover:bg-slate-50"
+            >
+              📅 Team Schedule
+            </Link>
+          </div>
           <h1 className="text-2xl font-semibold tracking-[0.18em] text-slate-800 uppercase sm:text-3xl">
             ICL PROJECT HUB
           </h1>
