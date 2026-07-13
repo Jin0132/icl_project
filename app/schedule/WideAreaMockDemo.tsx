@@ -2,51 +2,122 @@
 
 import { useMemo, useState } from "react";
 import {
-  buildMockWideAreaMatrix,
-  createInitialMockWideAreaState,
-  getCellStatusClasses,
-  getColumnHeatClasses,
-  mockVoteKey,
-  toggleMockVote,
-  type MockWideAreaState,
+  WEEKDAY_LABELS,
+  buildMockCalendarModel,
+  createInitialMockCalendarState,
+  getCalendarDayHeatClasses,
+  memberVotedOnDate,
+  toggleMockCalendarVote,
+  type CalendarDayHeat,
+  type MockWideAreaCalendarState,
 } from "@/lib/schedule/wide-area";
 import { SCHEDULE_MEMBERS, type ScheduleMember } from "@/lib/notion/schedule-schema";
 import { CARD_SHADOW } from "./schedule-ui";
 import { enJa } from "@/lib/ui/bilingual";
 
-/** Notion 未接続時も広域調整 UI を試せるサンプルカード */
+function MockDayCell({
+  day,
+  model,
+  activeMember,
+  isTop,
+  onVote,
+  onConfirm,
+}: {
+  day: CalendarDayHeat;
+  model: ReturnType<typeof buildMockCalendarModel>;
+  activeMember: ScheduleMember;
+  isTop: boolean;
+  onVote: (day: CalendarDayHeat) => void;
+  onConfirm: (day: CalendarDayHeat) => void;
+}) {
+  if (!day.inMonth) {
+    return <div className="min-h-[88px] rounded-xl" />;
+  }
+
+  const hasSlots = day.slots.length > 0;
+  const voted = memberVotedOnDate(model, day.dateKey, activeMember);
+
+  return (
+    <div
+      className={`relative flex min-h-[88px] flex-col rounded-xl border p-2 transition-all ${getCalendarDayHeatClasses(day.tier, isTop, voted)}`}
+    >
+      <div className="flex items-start justify-between gap-1">
+        <span className={`text-sm font-semibold ${hasSlots ? "text-slate-800" : "text-slate-300"}`}>
+          {day.dayNumber}
+        </span>
+        {hasSlots && (
+          <span
+            className={`rounded-full px-1.5 py-0.5 text-[10px] font-medium ${
+              day.tier === "full"
+                ? "bg-blue-100 text-blue-700"
+                : day.tier === "high"
+                  ? "bg-sky-100 text-sky-700"
+                  : "bg-slate-100 text-slate-600"
+            }`}
+          >
+            {day.availableCount}/{day.eligibleCount}
+          </span>
+        )}
+      </div>
+
+      {hasSlots ? (
+        <>
+          <button
+            type="button"
+            onClick={() => onVote(day)}
+            className="mt-1 flex-1 rounded-lg text-left hover:bg-white/50"
+          >
+            {day.slots.map((slot) => (
+              <p key={slot.id} className="text-[10px] text-slate-600">
+                {slot.timeLabel}
+              </p>
+            ))}
+            {voted && (
+              <p className="mt-1 text-[10px] font-medium text-emerald-600">
+                {enJa("You: available", "あなた: 参加可能")}
+              </p>
+            )}
+          </button>
+          {isTop && (
+            <button
+              type="button"
+              onClick={() => onConfirm(day)}
+              className="mt-1.5 w-full rounded-lg bg-emerald-600 py-1 text-[10px] font-medium text-white shadow-[0_0_12px_rgba(52,211,153,0.35)]"
+            >
+              {enJa("Confirm", "確定")}
+            </button>
+          )}
+        </>
+      ) : (
+        <div className="flex-1" />
+      )}
+    </div>
+  );
+}
+
+/** Notion 未接続時のカレンダーヒートマップ・デモ */
 export function WideAreaMockDemo() {
-  const [state, setState] = useState<MockWideAreaState>(createInitialMockWideAreaState);
-  const [confirmingId, setConfirmingId] = useState<string | null>(null);
-  const [confirmedSlotId, setConfirmedSlotId] = useState<string | null>(null);
+  const [state, setState] = useState<MockWideAreaCalendarState>(createInitialMockCalendarState);
+  const [activeMember, setActiveMember] = useState<ScheduleMember>("Theo");
+  const [confirmedDay, setConfirmedDay] = useState<CalendarDayHeat | null>(null);
 
-  const model = useMemo(() => buildMockWideAreaMatrix(state), [state]);
+  const model = useMemo(() => buildMockCalendarModel(state), [state]);
 
-  function handleCellClick(slotId: string, member: ScheduleMember) {
-    setState((current) => toggleMockVote(current, slotId, member));
-  }
-
-  function handleConfirm(slotId: string) {
-    setConfirmedSlotId(slotId);
-    setConfirmingId(null);
-  }
-
-  if (confirmedSlotId) {
-    const slot = state.slots.find((item) => item.id === confirmedSlotId);
-
+  if (confirmedDay) {
     return (
       <div className={`rounded-2xl border border-emerald-200 bg-emerald-50/60 px-6 py-8 text-center ${CARD_SHADOW}`}>
         <p className="text-sm font-medium text-emerald-800">
-          {enJa("Demo: slot confirmed", "デモ：以下の日時で確定しました")}
+          {enJa("Demo: meeting confirmed", "デモ：以下の日時で確定しました")}
         </p>
         <p className="mt-2 text-lg font-semibold text-slate-800">
-          {slot?.dateLabel} {slot?.timeLabel}
+          {confirmedDay.dateKey.replace(/-/g, "/")}
         </p>
+        <p className="text-sm text-slate-600">{confirmedDay.slots[0]?.timeLabel}</p>
         <button
           type="button"
           onClick={() => {
-            setConfirmedSlotId(null);
-            setState(createInitialMockWideAreaState());
+            setConfirmedDay(null);
+            setState(createInitialMockCalendarState());
           }}
           className="mt-4 rounded-full border border-slate-200 bg-white px-4 py-2 text-sm text-slate-600 hover:bg-slate-50"
         >
@@ -65,127 +136,92 @@ export function WideAreaMockDemo() {
         <h3 className="mt-2 text-lg font-semibold text-slate-800">{state.pollTitle}</h3>
         <p className="mt-1 text-xs text-slate-400">
           {enJa(
-            "Mock data — try clicking cells. Top attendance columns glow blue.",
-            "モックデータです。マスをクリックして動作を確認できます。出席率が高い列は青く光ります。",
+            "Calendar heatmap demo — select your name and click dates.",
+            "カレンダーヒートマップのデモです。名前を選んで日付をクリックしてください。",
           )}
         </p>
       </div>
 
-      <div className="overflow-x-auto px-4 py-4 sm:px-5">
-        <table className="min-w-full border-separate border-spacing-0 text-sm">
-          <thead>
-            <tr>
-              <th className="sticky left-0 z-20 min-w-[88px] border-b border-r border-slate-100 bg-slate-50 px-3 py-3 text-left text-xs font-medium text-slate-500">
-                {enJa("Member", "メンバー")}
-              </th>
-              {model.slots.map((slot) => {
-                const heat = model.columnHeat.find((column) => column.slotId === slot.id);
-                const isTop = model.topSlotIds.includes(slot.id);
+      <div className="px-4 py-4 sm:px-5">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-xs text-slate-500">{enJa("Answering as", "回答者")}</span>
+          {SCHEDULE_MEMBERS.map((member) => (
+            <button
+              key={member}
+              type="button"
+              onClick={() => setActiveMember(member)}
+              className={`rounded-full border px-3 py-1.5 text-xs font-medium ${
+                activeMember === member
+                  ? "border-blue-400 bg-blue-600 text-white"
+                  : "border-slate-200 bg-white text-slate-600"
+              }`}
+            >
+              {member}
+            </button>
+          ))}
+        </div>
 
-                return (
-                  <th
-                    key={slot.id}
-                    className={`min-w-[108px] border-b border-slate-100 px-2 py-2 text-center ${getColumnHeatClasses(heat?.tier ?? "none")}`}
-                  >
-                    <div className="text-[11px] font-semibold text-slate-700">{slot.dateLabel}</div>
-                    <div className="mt-0.5 text-[10px] text-slate-500">{slot.timeLabel}</div>
-                    <div
-                      className={`mt-1.5 inline-flex rounded-full px-2 py-0.5 text-[10px] font-medium ${
-                        isTop ? "bg-blue-100 text-blue-700" : "bg-slate-100 text-slate-600"
-                      }`}
-                    >
-                      {heat?.availableCount ?? 0}/{SCHEDULE_MEMBERS.length}
-                    </div>
-                  </th>
-                );
-              })}
-            </tr>
-          </thead>
-          <tbody>
-            {SCHEDULE_MEMBERS.map((member) => (
-              <tr key={member}>
-                <td className="sticky left-0 z-10 border-r border-b border-slate-100 bg-white px-3 py-2 text-xs font-medium text-slate-700">
-                  {member}
-                </td>
-                {model.slots.map((slot) => {
-                  const cell = model.cells.find(
-                    (item) => item.slotId === slot.id && item.member === member,
-                  );
-                  const status = cell?.status ?? "pending";
-                  const isTop = model.topSlotIds.includes(slot.id);
-                  const heat = model.columnHeat.find((column) => column.slotId === slot.id);
-                  const active = state.votes.has(mockVoteKey(slot.id, member));
+        <div className="mt-4 rounded-2xl border border-slate-100 p-3 sm:p-4">
+          <div className="mb-3 flex items-center justify-between">
+            <button
+              type="button"
+              onClick={() =>
+                setState((current) => ({
+                  ...current,
+                  month: new Date(
+                    current.month.getFullYear(),
+                    current.month.getMonth() - 1,
+                    1,
+                  ),
+                }))
+              }
+              className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm text-slate-600 hover:bg-slate-50"
+            >
+              ←
+            </button>
+            <h4 className="text-sm font-semibold text-slate-800">{model.monthLabel}</h4>
+            <button
+              type="button"
+              onClick={() =>
+                setState((current) => ({
+                  ...current,
+                  month: new Date(
+                    current.month.getFullYear(),
+                    current.month.getMonth() + 1,
+                    1,
+                  ),
+                }))
+              }
+              className="rounded-lg border border-slate-200 px-3 py-1.5 text-sm text-slate-600 hover:bg-slate-50"
+            >
+              →
+            </button>
+          </div>
 
-                  return (
-                    <td
-                      key={`${slot.id}-${member}`}
-                      className={`border-b border-slate-100 px-2 py-2 text-center ${getColumnHeatClasses(heat?.tier ?? "none")}`}
-                    >
-                      <button
-                        type="button"
-                        onClick={() => handleCellClick(slot.id, member)}
-                        className={`mx-auto flex h-9 w-9 items-center justify-center rounded-xl border text-xs font-semibold transition-all ${getCellStatusClasses(status, isTop)}`}
-                      >
-                        {active ? "✓" : ""}
-                      </button>
-                    </td>
-                  );
-                })}
-              </tr>
+          <div className="grid grid-cols-7 gap-1 text-center text-xs text-slate-400">
+            {WEEKDAY_LABELS.map((label) => (
+              <div key={label} className="py-1 font-medium">
+                {label}
+              </div>
             ))}
-            <tr>
-              <td className="sticky left-0 z-10 border-r border-slate-100 bg-slate-50 px-3 py-3 text-[11px] font-medium text-slate-500">
-                {enJa("Confirm", "確定")}
-              </td>
-              {model.slots.map((slot) => {
-                const heat = model.columnHeat.find((column) => column.slotId === slot.id);
-                const isTop = model.topSlotIds.includes(slot.id);
-                const isConfirming = confirmingId === slot.id;
+          </div>
 
-                return (
-                  <td
-                    key={`confirm-${slot.id}`}
-                    className={`px-2 py-3 text-center ${getColumnHeatClasses(heat?.tier ?? "none")}`}
-                  >
-                    {isConfirming ? (
-                      <div className="mx-auto max-w-[120px] rounded-xl border border-amber-200 bg-amber-50 p-2">
-                        <div className="mt-1.5 flex justify-center gap-1">
-                          <button
-                            type="button"
-                            onClick={() => setConfirmingId(null)}
-                            className="rounded-lg border border-slate-200 bg-white px-2 py-0.5 text-[10px] text-slate-600"
-                          >
-                            {enJa("Back", "戻る")}
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleConfirm(slot.id)}
-                            className="rounded-lg bg-emerald-600 px-2 py-0.5 text-[10px] font-medium text-white"
-                          >
-                            {enJa("OK", "確定")}
-                          </button>
-                        </div>
-                      </div>
-                    ) : (
-                      <button
-                        type="button"
-                        disabled={(heat?.availableCount ?? 0) === 0}
-                        onClick={() => setConfirmingId(slot.id)}
-                        className={`rounded-lg px-3 py-1.5 text-[11px] font-medium transition-all disabled:opacity-40 ${
-                          isTop
-                            ? "bg-emerald-600 text-white shadow-[0_0_16px_rgba(52,211,153,0.35)]"
-                            : "border border-slate-200 bg-white text-slate-600"
-                        }`}
-                      >
-                        {enJa("Confirm", "確定")}
-                      </button>
-                    )}
-                  </td>
-                );
-              })}
-            </tr>
-          </tbody>
-        </table>
+          <div className="mt-1 grid grid-cols-7 gap-1.5">
+            {model.days.map((day) => (
+              <MockDayCell
+                key={day.dateKey || `pad-${day.dayNumber}`}
+                day={day}
+                model={model}
+                activeMember={activeMember}
+                isTop={model.topDateKeys.includes(day.dateKey)}
+                onVote={(target) =>
+                  setState((current) => toggleMockCalendarVote(current, target.dateKey, activeMember))
+                }
+                onConfirm={setConfirmedDay}
+              />
+            ))}
+          </div>
+        </div>
       </div>
     </div>
   );

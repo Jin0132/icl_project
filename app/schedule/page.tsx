@@ -12,7 +12,7 @@ import {
   type AppEventCategory,
 } from "@/lib/notion/notion-datetime";
 import { MonthCalendar } from "./MonthCalendar";
-import { WideAreaMatrix } from "./WideAreaMatrix";
+import { WideAreaCalendar } from "./WideAreaCalendar";
 import { WideAreaMockDemo } from "./WideAreaMockDemo";
 import { CARD_SHADOW, CATEGORY_STYLES, type CoordinationMode } from "./schedule-ui";
 import type {
@@ -372,7 +372,7 @@ function PollGroupCard({
       </div>
 
       {coordinationMode === "wide" ? (
-        <WideAreaMatrix
+        <WideAreaCalendar
           candidates={candidates}
           groupDrafts={groupDrafts}
           groupKey={groupKey}
@@ -380,8 +380,6 @@ function PollGroupCard({
           busy={busy}
           confirmingId={confirmingId}
           onToggleAvailability={onToggleAvailability}
-          onEventDecline={onEventDecline}
-          onUndoDecline={onUndoDecline}
           onRequestConfirm={onRequestConfirm}
           onCancelConfirm={onCancelConfirm}
           onConfirm={onConfirm}
