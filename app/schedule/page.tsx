@@ -12,6 +12,9 @@ import {
   type AppEventCategory,
 } from "@/lib/notion/notion-datetime";
 import { MonthCalendar } from "./MonthCalendar";
+import { WideAreaMatrix } from "./WideAreaMatrix";
+import { WideAreaMockDemo } from "./WideAreaMockDemo";
+import { CARD_SHADOW, CATEGORY_STYLES, type CoordinationMode } from "./schedule-ui";
 import type {
   ConfirmedEvent,
   ScheduleApiResponse,
@@ -46,23 +49,6 @@ const CONFIRMED_CATEGORY_LABELS: Record<AppEventCategory, string> = {
   MTG: enJa("MTG", "会議"),
   Event: enJa("Event", "イベント"),
   Other: enJa("Other", "その他"),
-};
-
-const CARD_SHADOW = "shadow-[0_4px_24px_rgba(0,0,0,0.06)]";
-
-const CATEGORY_STYLES: Record<string, { border: string; pill: string }> = {
-  "MTG / 定例MTG": {
-    border: "border-l-blue-500",
-    pill: "bg-blue-50 text-blue-700 border-blue-100",
-  },
-  "Event / イベント": {
-    border: "border-l-orange-500",
-    pill: "bg-orange-50 text-orange-700 border-orange-100",
-  },
-  "Other / その他": {
-    border: "border-l-slate-400",
-    pill: "bg-slate-50 text-slate-700 border-slate-200",
-  },
 };
 
 function addMinutesToLocalDatetime(localValue: string, minutes: number): string {
@@ -256,6 +242,7 @@ function PollGroupCard({
   candidates,
   groupDrafts,
   availabilityByCandidate,
+  coordinationMode,
   busy,
   confirmingId,
   deletingId,
@@ -275,6 +262,7 @@ function PollGroupCard({
   candidates: ScheduleDraft[];
   groupDrafts: ScheduleDraft[];
   availabilityByCandidate: Map<string, ScheduleDraft[]>;
+  coordinationMode: CoordinationMode;
   busy: boolean;
   confirmingId: string | null;
   deletingId: string | null;
@@ -383,6 +371,22 @@ function PollGroupCard({
         </div>
       </div>
 
+      {coordinationMode === "wide" ? (
+        <WideAreaMatrix
+          candidates={candidates}
+          groupDrafts={groupDrafts}
+          groupKey={groupKey}
+          availabilityByCandidate={availabilityByCandidate}
+          busy={busy}
+          confirmingId={confirmingId}
+          onToggleAvailability={onToggleAvailability}
+          onEventDecline={onEventDecline}
+          onUndoDecline={onUndoDecline}
+          onRequestConfirm={onRequestConfirm}
+          onCancelConfirm={onCancelConfirm}
+          onConfirm={onConfirm}
+        />
+      ) : (
       <div className="divide-y divide-slate-100">
         {dateGroups.map((dateGroup) => {
           const showAll = expandedDates.has(dateGroup.dateKey);
@@ -522,6 +526,7 @@ function PollGroupCard({
           );
         })}
       </div>
+      )}
     </div>
   );
 }
@@ -546,6 +551,7 @@ export default function SchedulePage() {
   const [confirmedCategoryFilter, setConfirmedCategoryFilter] =
     useState<ConfirmedCategoryFilter>("all");
   const [calendarMonth, setCalendarMonth] = useState(() => new Date());
+  const [coordinationMode, setCoordinationMode] = useState<CoordinationMode>("finalize");
 
   const fetchSchedule = useCallback(async () => {
     setLoadState((current) => (current === "success" ? current : "loading"));
@@ -1166,6 +1172,23 @@ export default function SchedulePage() {
           {section === "drafts" && (
             <>
               <span className="mx-1 w-px self-stretch bg-slate-200" />
+              {(["finalize", "wide"] as const).map((value) => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => setCoordinationMode(value)}
+                  className={`rounded-full px-4 py-2 text-sm ${
+                    coordinationMode === value
+                      ? "bg-blue-600 text-white"
+                      : "border border-slate-200 bg-white text-slate-600"
+                  }`}
+                >
+                  {value === "finalize"
+                    ? enJa("Finalize", "最終確定")
+                    : enJa("Wide poll", "広域調整")}
+                </button>
+              ))}
+              <span className="mx-1 w-px self-stretch bg-slate-200" />
               <select
                 value={categoryFilter}
                 onChange={(event) =>
@@ -1193,9 +1216,13 @@ export default function SchedulePage() {
         ) : section === "drafts" ? (
           <div className="space-y-5">
             {pollGroups.length === 0 ? (
+              coordinationMode === "wide" ? (
+                <WideAreaMockDemo />
+              ) : (
               <div className="rounded-xl border border-dashed border-slate-200 bg-white/60 px-6 py-10 text-center text-sm text-slate-400">
                 {enJa("No open polls", "調整中の候補はありません")}
               </div>
+              )
             ) : (
               pollGroups.map((group) => {
                 const groupDrafts = data
@@ -1212,6 +1239,7 @@ export default function SchedulePage() {
                     candidates={group.items}
                     groupDrafts={groupDrafts}
                     availabilityByCandidate={availabilityByCandidate}
+                    coordinationMode={coordinationMode}
                     busy={busy}
                     confirmingId={confirmingId}
                     deletingId={deletingId}
