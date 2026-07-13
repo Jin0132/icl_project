@@ -4,6 +4,7 @@ import Link from "next/link";
 import { FormEvent, useCallback, useEffect, useState, type ReactNode } from "react";
 import type { ProjectTask, TasksApiResponse } from "@/lib/notion/project-schema";
 import { normalizeTasksResponse, partitionTasks } from "@/lib/notion/task-filters";
+import { enJa } from "@/lib/ui/bilingual";
 
 type LoadState = "loading" | "success" | "error";
 
@@ -216,8 +217,11 @@ function DoneConfirmDialog({
   return (
     <div className="absolute inset-0 z-10 flex items-center justify-center bg-white/90 p-6 backdrop-blur-[1px]">
       <div className="w-full max-w-md rounded-xl border border-amber-200 bg-amber-50/80 p-5 shadow-sm">
-        <p className="text-sm font-semibold text-amber-900">Doneにしますか？</p>
+        <p className="text-sm font-semibold text-amber-900">{enJa("Mark as Done?", "Doneにしますか？")}</p>
         <p className="mt-2 text-sm leading-relaxed text-amber-900/90">
+          This task will be hidden here. Uncheck Done in Notion to restore it.
+        </p>
+        <p className="mt-1 text-xs leading-relaxed text-amber-800/80">
           今後この課題はここでは表示されません。復元には Notion から直接チェックを外してください。
         </p>
         <p className="mt-3 truncate text-xs text-amber-800/70">{taskTitle}</p>
@@ -228,7 +232,7 @@ function DoneConfirmDialog({
             onClick={onCancel}
             className="rounded-lg border border-slate-200 bg-white px-4 py-2 text-sm text-slate-600 transition-colors hover:bg-slate-50 disabled:cursor-wait disabled:opacity-60"
           >
-            キャンセル
+            {enJa("Cancel", "キャンセル")}
           </button>
           <button
             type="button"
@@ -240,7 +244,7 @@ function DoneConfirmDialog({
             }}
             className="rounded-lg bg-blue-600 px-4 py-2 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:cursor-wait disabled:opacity-60"
           >
-            {saving ? "処理中…" : "Doneにする"}
+            {saving ? enJa("Saving…", "処理中…") : enJa("Mark Done", "Doneにする")}
           </button>
         </div>
       </div>
@@ -702,6 +706,9 @@ export default function DashboardPage() {
           <h1 className="text-2xl font-semibold tracking-[0.18em] text-slate-800 uppercase sm:text-3xl">
             ICL PROJECT HUB
           </h1>
+          <p className="mt-2 text-sm text-slate-500">
+            {enJa("Project & task management", "プロジェクト・課題管理")}
+          </p>
           <StatusLabel state={loadState} />
 
           <div className="mx-auto mt-5 flex max-w-md items-center justify-center gap-0">
@@ -719,7 +726,10 @@ export default function DashboardPage() {
 
         <div className="grid gap-8 md:grid-cols-2 md:gap-10">
           <section>
-            <SectionHeader icon="📊" title="Immediate Tasks (Due in 7 Days)" />
+            <SectionHeader
+              icon="📊"
+              title={enJa("Immediate Tasks (Due in 7 Days)", "今週の期限タスク")}
+            />
 
             {loadState === "loading" ? (
               <PanelSkeleton variant="task" />
@@ -735,12 +745,12 @@ export default function DashboardPage() {
                 ))}
               </div>
             ) : (
-              <EmptyState message="No tasks due in the next 7 days" />
+              <EmptyState message={enJa("No tasks due in the next 7 days", "7日以内の期限タスクはありません")} />
             )}
           </section>
 
           <section>
-            <SectionHeader icon="🗣️" title="Next Meeting Agenda" />
+            <SectionHeader icon="🗣️" title={enJa("Next Meeting Agenda", "次回議題")} />
 
             {loadState === "loading" ? (
               <PanelSkeleton variant="agenda" />
@@ -756,14 +766,14 @@ export default function DashboardPage() {
                 ))}
               </div>
             ) : (
-              <EmptyState message="No agenda items yet" />
+              <EmptyState message={enJa("No agenda items yet", "議題はまだありません")} />
             )}
           </section>
         </div>
 
         <section className="mt-12 sm:mt-16">
           <h2 className="mb-6 text-center text-sm font-semibold tracking-[0.18em] text-slate-600 uppercase">
-            Quick Task Add
+            {enJa("Quick Task Add", "クイック追加")}
           </h2>
 
           <div className="relative mx-auto max-w-2xl">
@@ -802,14 +812,14 @@ export default function DashboardPage() {
         </section>
 
         <section className="mt-12 sm:mt-16">
-          <SectionHeader icon="📋" title="All Projects" />
+          <SectionHeader icon="📋" title={enJa("All Projects", "全プロジェクト")} />
 
           {loadState === "loading" ? (
             <div className="h-48 animate-pulse rounded-xl border border-slate-200 bg-white/80" />
           ) : data && (data.allTasks?.length ?? 0) > 0 ? (
             <AllTasksTable tasks={data.allTasks ?? []} onOpen={setSelectedTask} />
           ) : (
-            <EmptyState message="No project tasks yet" />
+            <EmptyState message={enJa("No project tasks yet", "プロジェクトタスクはまだありません")} />
           )}
         </section>
       </div>

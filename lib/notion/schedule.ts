@@ -14,8 +14,15 @@ import {
 } from "./notion-datetime";
 import { parseConfirmedEvent, parseScheduleDraft } from "./parse-schedule";
 import {
+  buildDeclineMemo,
+  getDeclineGroupKey,
+  isDeclineDraft,
+  isSlotAvailabilityDraft,
+} from "./schedule-rsvp";
+import {
   CALENDAR_PROPERTIES,
   MEMBER_CALENDAR_TAGS,
+  getScheduleDraftGroupKey,
   normalizeScheduleEventTitle,
   SCHEDULE_DRAFT_PROPERTIES,
   type ConfirmedEvent,
@@ -266,6 +273,9 @@ export async function markAvailable(input: MarkAvailableInput): Promise<Schedule
     throw new Error("Only candidate slots can receive availability responses");
   }
 
+  const groupKey = getScheduleDraftGroupKey(candidate);
+  await clearMemberResponsesInGroup(candidate, input.person, groupKey);
+
   const eventTitle = normalizeScheduleEventTitle(candidate.title);
   const creator = candidate.creator ?? candidate.person;
 
@@ -319,6 +329,130 @@ export async function markAvailable(input: MarkAvailableInput): Promise<Schedule
 
   if (!isFullPage(page)) {
     throw new Error("Created availability page is not accessible");
+  }
+
+  return parseScheduleDraft(page);
+}
+
+type MarkEventDeclineInput = {
+  candidateId: string;
+  person: ScheduleMember;
+};
+
+async function getGroupDraftsForCandidate(candidate: ScheduleDraft): Promise<ScheduleDraft[]> {
+  if (!candidate.pollId) {
+    return [candidate];
+  }
+
+  const pollDrafts = await getPollDrafts(candidate.pollId);
+  const groupTitle = normalizeScheduleEventTitle(candidate.title);
+  return pollDrafts.filter(
+    (draft) => normalizeScheduleEventTitle(draft.title) === groupTitle,
+  );
+}
+
+async function clearMemberResponsesInGroup(
+  candidate: ScheduleDraft,
+  person: ScheduleMember,
+  groupKey: string,
+): Promise<void> {
+  const groupDrafts = await getGroupDraftsForCandidate(candidate);
+  const candidateIds = new Set(
+    groupDrafts.filter((draft) => draft.type === "Candidate / 候補").map((draft) => draft.id),
+  );
+
+  const idsToCancel = groupDrafts
+    .filter((draft) => {
+      if (draft.person !== person) {
+        return false;
+      }
+
+      if (isDeclineDraft(draft) && getDeclineGroupKey(draft) === groupKey) {
+        return true;
+      }
+
+      if (!isSlotAvailabilityDraft(draft)) {
+        return false;
+      }
+
+      const candidateId = draft.memo?.match(/candidate:([^\s]+)/)?.[1];
+      return candidateId ? candidateIds.has(candidateId) : false;
+    })
+    .map((draft) => draft.id);
+
+  await Promise.all(idsToCancel.map((id) => cancelDraft(id)));
+}
+
+export async function markEventDecline(input: MarkEventDeclineInput): Promise<ScheduleDraft> {
+  const notion = getNotionClient();
+  const candidatePage = await notion.pages.retrieve({ page_id: input.candidateId });
+
+  if (!isFullPage(candidatePage)) {
+    throw new Error("Candidate page is not accessible");
+  }
+
+  const candidate = parseScheduleDraft(candidatePage);
+
+  if (candidate.type !== "Candidate / 候補") {
+    throw new Error("Only candidate slots can be declined");
+  }
+
+  const groupKey = getScheduleDraftGroupKey(candidate);
+  await clearMemberResponsesInGroup(candidate, input.person, groupKey);
+
+  const eventTitle = normalizeScheduleEventTitle(candidate.title);
+  const creator = candidate.creator ?? candidate.person;
+
+  const properties: Record<string, unknown> = {
+    [SCHEDULE_DRAFT_PROPERTIES.title]: {
+      title: [{ text: { content: eventTitle.slice(0, 2000) } }],
+    },
+    [SCHEDULE_DRAFT_PROPERTIES.person]: {
+      select: { name: input.person },
+    },
+    ...(creator
+      ? {
+          [SCHEDULE_DRAFT_PROPERTIES.creator]: {
+            select: { name: creator },
+          },
+        }
+      : {}),
+    [SCHEDULE_DRAFT_PROPERTIES.type]: {
+      select: { name: "Available / 参加可能" },
+    },
+    [SCHEDULE_DRAFT_PROPERTIES.status]: {
+      select: { name: "Open / 調整中" },
+    },
+    [SCHEDULE_DRAFT_PROPERTIES.memo]: {
+      rich_text: [{ text: { content: buildDeclineMemo(groupKey) } }],
+    },
+    ...buildNotionDateProperty(
+      candidate.start,
+      candidate.end,
+      candidate.isDatetime,
+      SCHEDULE_DRAFT_PROPERTIES.date,
+    ),
+  };
+
+  if (candidate.category) {
+    properties[SCHEDULE_DRAFT_PROPERTIES.category] = {
+      select: { name: candidate.category },
+    };
+  }
+
+  if (candidate.pollId) {
+    properties[SCHEDULE_DRAFT_PROPERTIES.poll] = {
+      rich_text: [{ text: { content: candidate.pollId } }],
+    };
+  }
+
+  const page = await notion.pages.create({
+    parent: { database_id: getScheduleDraftDatabaseId() },
+    properties: properties as Parameters<typeof notion.pages.create>[0]["properties"],
+  });
+
+  if (!isFullPage(page)) {
+    throw new Error("Created decline page is not accessible");
   }
 
   return parseScheduleDraft(page);

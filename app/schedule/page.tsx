@@ -25,6 +25,15 @@ import {
   getScheduleDraftGroupKey,
   normalizeScheduleEventTitle,
 } from "@/lib/notion/schedule-schema";
+import { enJa } from "@/lib/ui/bilingual";
+import {
+  getDeclineGroupKey,
+  getMemberRsvpInGroup,
+  getPendingMembers,
+  getGroupDraftsForCandidates,
+  isDeclineDraft,
+  type MemberRsvpStatus,
+} from "@/lib/notion/schedule-rsvp";
 
 type LoadState = "loading" | "success" | "error";
 type SectionFilter = "drafts" | "confirmed";
@@ -33,9 +42,9 @@ type ConfirmedCategoryFilter = "all" | AppEventCategory;
 type ViewMode = "list" | "calendar";
 
 const CONFIRMED_CATEGORY_LABELS: Record<AppEventCategory, string> = {
-  MTG: "会議（MTG）",
-  Event: "イベント",
-  Other: "その他",
+  MTG: enJa("MTG", "会議"),
+  Event: enJa("Event", "イベント"),
+  Other: enJa("Other", "その他"),
 };
 
 const CARD_SHADOW = "shadow-[0_4px_24px_rgba(0,0,0,0.06)]";
@@ -98,9 +107,10 @@ function groupCandidates(drafts: ScheduleDraft[]) {
   }
 
   return [...groups.entries()]
-    .map(([groupId, items]) => ({
-      groupId,
-      pollId: items[0]?.pollId ?? items[0]?.id ?? groupId,
+    .map(([groupKey, items]) => ({
+      groupId: groupKey,
+      groupKey,
+      pollId: items[0]?.pollId ?? items[0]?.id ?? groupKey,
       items: items.sort((left, right) => left.start.localeCompare(right.start)),
       headline: items[0],
       displayTitle: normalizeScheduleEventTitle(items[0]?.title ?? ""),
@@ -145,6 +155,33 @@ function removeCandidateFromDrafts(drafts: ScheduleDraft[], candidateId: string)
   );
 }
 
+function removeGroupFromDrafts(
+  drafts: ScheduleDraft[],
+  groupKey: string,
+  candidateIds: string[],
+): ScheduleDraft[] {
+  const candidateIdSet = new Set(candidateIds);
+
+  return drafts.filter((draft) => {
+    if (draft.type === "Candidate / 候補" && candidateIdSet.has(draft.id)) {
+      return false;
+    }
+
+    if (isDeclineDraft(draft) && getDeclineGroupKey(draft) === groupKey) {
+      return false;
+    }
+
+    if (draft.memo?.includes("candidate:")) {
+      const candidateId = draft.memo.match(/candidate:([^\s]+)/)?.[1];
+      if (candidateId && candidateIdSet.has(candidateId)) {
+        return false;
+      }
+    }
+
+    return true;
+  });
+}
+
 function SummaryCard({ label, value }: { label: string; value: number }) {
   return (
     <div className={`rounded-2xl border border-slate-200 bg-white px-5 py-4 ${CARD_SHADOW}`}>
@@ -175,11 +212,48 @@ function groupCandidatesByDate(candidates: ScheduleDraft[]) {
 
 const SLOTS_COLLAPSED_LIMIT = 6;
 
+const RSVP_STATUS_STYLES: Record<MemberRsvpStatus, string> = {
+  pending: "border-slate-200 bg-white text-slate-600",
+  available: "border-emerald-200 bg-emerald-50 text-emerald-800",
+  declined: "border-red-200 bg-red-50 text-red-700",
+};
+
+function buildRsvpReminderText({
+  title,
+  pending,
+  deadline,
+}: {
+  title: string;
+  pending: ScheduleMember[];
+  deadline: string;
+}): string {
+  const origin = typeof window !== "undefined" ? window.location.origin : "";
+  const pendingEn =
+    pending.length > 0 ? `Pending: ${pending.join(", ")}` : "All members have responded.";
+  const pendingJa =
+    pending.length > 0 ? `未回答: ${pending.join("、")}` : "全員回答済みです。";
+
+  return [
+    `[Schedule RSVP] ${title}`,
+    "",
+    "Please mark Available or Can't attend on the team schedule page:",
+    `${origin}/schedule`,
+    "",
+    deadline ? `Please respond by: ${deadline}` : "",
+    deadline ? `回答期限: ${deadline}` : "",
+    pendingEn,
+    pendingJa,
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
 function PollGroupCard({
-  groupId,
+  groupKey,
   displayTitle,
   headline,
   candidates,
+  groupDrafts,
   availabilityByCandidate,
   busy,
   confirmingId,
@@ -190,11 +264,15 @@ function PollGroupCard({
   onConfirm,
   onDeleteCandidate,
   onDeleteGroup,
+  onEventDecline,
+  onUndoDecline,
+  onCopyReminder,
 }: {
-  groupId: string;
+  groupKey: string;
   displayTitle: string;
   headline: ScheduleDraft;
   candidates: ScheduleDraft[];
+  groupDrafts: ScheduleDraft[];
   availabilityByCandidate: Map<string, ScheduleDraft[]>;
   busy: boolean;
   confirmingId: string | null;
@@ -205,11 +283,19 @@ function PollGroupCard({
   onConfirm: (candidateId: string) => void;
   onDeleteCandidate: (candidateId: string) => void;
   onDeleteGroup: (candidateIds: string[]) => void;
+  onEventDecline: (member: ScheduleMember) => void;
+  onUndoDecline: (member: ScheduleMember) => void;
+  onCopyReminder: () => void;
 }) {
   const style =
     CATEGORY_STYLES[headline.category ?? ""] ?? CATEGORY_STYLES["Other / その他"];
   const dateGroups = useMemo(() => groupCandidatesByDate(candidates), [candidates]);
   const [expandedDates, setExpandedDates] = useState<Set<string>>(() => new Set());
+  const pendingMembers = useMemo(
+    () => getPendingMembers(groupDrafts, candidates, groupKey),
+    [groupDrafts, candidates, groupKey],
+  );
+  const referenceCandidate = candidates[0];
 
   function toggleDateExpanded(dateKey: string) {
     setExpandedDates((current) => {
@@ -235,22 +321,99 @@ function PollGroupCard({
                 </span>
               )}
               <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs text-slate-600">
-                候補 {candidates.length}件 · {dateGroups.length}日
+                {enJa(`${candidates.length} slots`, `${candidates.length}件の候補`)} ·{" "}
+                {enJa(`${dateGroups.length} days`, `${dateGroups.length}日`)}
               </span>
             </div>
             <h3 className="mt-2 text-lg font-semibold text-slate-800">{displayTitle}</h3>
             <p className="mt-1 text-sm text-slate-500">
-              作成者: {headline.creator ?? headline.person ?? "—"}
+              {enJa("Created by", "作成者")}: {headline.creator ?? headline.person ?? "—"}
             </p>
           </div>
-          <button
-            type="button"
-            disabled={busy}
-            onClick={() => onDeleteGroup(candidates.map((candidate) => candidate.id))}
-            className="shrink-0 rounded-xl border border-red-300 bg-red-50 px-4 py-2 text-sm font-medium text-red-700 hover:bg-red-100 disabled:opacity-60"
-          >
-            この調整を削除
-          </button>
+          <div className="flex shrink-0 flex-col items-end gap-2">
+            <button
+              type="button"
+              disabled={busy}
+              onClick={onCopyReminder}
+              className="rounded-xl border border-slate-200 bg-white px-4 py-2 text-sm text-slate-700 hover:bg-slate-50 disabled:opacity-60"
+            >
+              {enJa("Copy reminder", "リマインドをコピー")}
+            </button>
+            <button
+              type="button"
+              disabled={busy}
+              onClick={() => onDeleteGroup(candidates.map((candidate) => candidate.id))}
+              className="rounded-xl border border-red-300 bg-red-50 px-4 py-2 text-sm font-medium text-red-700 hover:bg-red-100 disabled:opacity-60"
+            >
+              {enJa("Delete poll", "この調整を削除")}
+            </button>
+          </div>
+        </div>
+
+        <div className="mt-4 border-t border-slate-100 pt-4">
+          <p className="text-xs font-medium text-slate-500">{enJa("Quick RSVP", "クイック出欠")}</p>
+          <p className="mt-1 text-[11px] text-slate-400">
+            {enJa(
+              "Mark time slots below, or set Can't attend for the whole event.",
+              "下の表で参加可能な時間を選ぶか、イベント全体を参加不可にできます。",
+            )}
+          </p>
+          <div className="mt-3 flex flex-wrap gap-2">
+            {SCHEDULE_MEMBERS.map((member) => {
+              const status = getMemberRsvpInGroup(groupDrafts, candidates, groupKey, member);
+              const declineDraft = groupDrafts.find(
+                (draft) =>
+                  isDeclineDraft(draft) &&
+                  draft.person === member &&
+                  getDeclineGroupKey(draft) === groupKey,
+              );
+
+              return (
+                <div
+                  key={member}
+                  className="flex flex-wrap items-center gap-1.5 rounded-xl border border-slate-100 bg-slate-50/80 px-2 py-1.5"
+                >
+                  <span
+                    className={`rounded-full border px-2.5 py-1 text-xs font-medium ${RSVP_STATUS_STYLES[status]}`}
+                  >
+                    {member}
+                    <span className="ml-1 opacity-70">
+                      {status === "pending"
+                        ? "?"
+                        : status === "available"
+                          ? "✓"
+                          : "✗"}
+                    </span>
+                  </span>
+                  {status !== "declined" && referenceCandidate && (
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => onEventDecline(member)}
+                      className="rounded-lg border border-red-200 bg-white px-2 py-1 text-[11px] text-red-700 hover:bg-red-50 disabled:opacity-60"
+                    >
+                      {enJa("Can't attend", "参加不可")}
+                    </button>
+                  )}
+                  {status === "declined" && declineDraft && (
+                    <button
+                      type="button"
+                      disabled={busy}
+                      onClick={() => onUndoDecline(member)}
+                      className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px] text-slate-600 hover:bg-slate-50 disabled:opacity-60"
+                    >
+                      {enJa("Undo", "取り消し")}
+                    </button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+          {pendingMembers.length > 0 && (
+            <p className="mt-2 text-[11px] text-amber-700">
+              {enJa("Awaiting response", "未回答")}: {pendingMembers.join(", ")}
+            </p>
+          )}
         </div>
       </div>
 
@@ -267,16 +430,20 @@ function PollGroupCard({
             <section key={dateGroup.dateKey} className="px-4 py-4 sm:px-5">
               <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
                 <h4 className="text-sm font-semibold text-slate-700">{dateGroup.label}</h4>
-                <span className="text-xs text-slate-400">{dateGroup.items.length}枠</span>
+                <span className="text-xs text-slate-400">
+                  {enJa(`${dateGroup.items.length} slots`, `${dateGroup.items.length}枠`)}
+                </span>
               </div>
 
               <div className="overflow-x-auto rounded-xl border border-slate-100">
                 <table className="min-w-full text-left text-sm">
                   <thead className="bg-slate-50 text-xs text-slate-500">
                     <tr>
-                      <th className="px-3 py-2 font-medium whitespace-nowrap">時間</th>
-                      <th className="px-3 py-2 font-medium">参加可能</th>
-                      <th className="px-3 py-2 font-medium text-right whitespace-nowrap">操作</th>
+                      <th className="px-3 py-2 font-medium whitespace-nowrap">{enJa("Time", "時間")}</th>
+                      <th className="px-3 py-2 font-medium">{enJa("Available", "参加可能")}</th>
+                      <th className="px-3 py-2 font-medium text-right whitespace-nowrap">
+                        {enJa("Actions", "操作")}
+                      </th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
@@ -316,20 +483,22 @@ function PollGroupCard({
                             </div>
                             <p className="mt-1 text-[11px] text-slate-400">
                               {availability.map((item) => item.person).filter(Boolean).join("、") ||
-                                "未回答"}
+                                enJa("No response", "未回答")}
                             </p>
                           </td>
                           <td className="px-3 py-3 text-right whitespace-nowrap">
                             {isConfirming ? (
                               <div className="inline-block max-w-xs rounded-xl border border-amber-200 bg-amber-50 p-2 text-left">
-                                <p className="text-[11px] text-amber-900">この時間で確定しますか？</p>
+                                <p className="text-[11px] text-amber-900">
+                                  {enJa("Confirm this time?", "この時間で確定しますか？")}
+                                </p>
                                 <div className="mt-2 flex justify-end gap-1.5">
                                   <button
                                     type="button"
                                     onClick={onCancelConfirm}
                                     className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px] text-slate-600"
                                   >
-                                    戻る
+                                    {enJa("Back", "戻る")}
                                   </button>
                                   <button
                                     type="button"
@@ -337,7 +506,7 @@ function PollGroupCard({
                                     onClick={() => onConfirm(candidate.id)}
                                     className="rounded-lg bg-emerald-600 px-2 py-1 text-[11px] font-medium text-white"
                                   >
-                                    確定
+                                    {enJa("Confirm", "確定")}
                                   </button>
                                 </div>
                               </div>
@@ -349,16 +518,18 @@ function PollGroupCard({
                                   onClick={() => onRequestConfirm(candidate.id)}
                                   className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700"
                                 >
-                                  確定
+                                  {enJa("Confirm", "確定")}
                                 </button>
                                 <button
                                   type="button"
                                   disabled={busy || deletingId === candidate.id}
                                   onClick={() => onDeleteCandidate(candidate.id)}
                                   className="rounded-lg border border-red-300 bg-red-50 px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-100 disabled:opacity-60"
-                                  title="この候補を削除"
+                                  title={enJa("Delete this candidate", "この候補を削除")}
                                 >
-                                  {deletingId === candidate.id ? "削除中…" : "削除"}
+                                  {deletingId === candidate.id
+                                    ? enJa("Deleting…", "削除中…")
+                                    : enJa("Delete", "削除")}
                                 </button>
                               </div>
                             )}
@@ -376,7 +547,9 @@ function PollGroupCard({
                   onClick={() => toggleDateExpanded(dateGroup.dateKey)}
                   className="mt-2 text-xs font-medium text-blue-600 hover:text-blue-700"
                 >
-                  {showAll ? "折りたたむ" : `あと${hiddenCount}枠を表示`}
+                  {showAll
+                    ? enJa("Show less", "折りたたむ")
+                    : enJa(`Show ${hiddenCount} more`, `あと${hiddenCount}枠を表示`)}
                 </button>
               )}
             </section>
@@ -565,9 +738,21 @@ export default function SchedulePage() {
         }
 
         const created = (await response.json()) as ScheduleDraft;
-        setData((prev) =>
-          prev ? patchScheduleData(prev, { drafts: sortDrafts([...prev.drafts, created]) }) : prev,
-        );
+        const groupKey = getScheduleDraftGroupKey(candidate);
+        setData((prev) => {
+          if (!prev) return prev;
+
+          const drafts = prev.drafts.filter(
+            (draft) =>
+              !(
+                isDeclineDraft(draft) &&
+                draft.person === member &&
+                getDeclineGroupKey(draft) === groupKey
+              ),
+          );
+
+          return patchScheduleData(prev, { drafts: sortDrafts([...drafts, created]) });
+        });
       }
     } catch (error) {
       setData(previousData);
@@ -577,9 +762,128 @@ export default function SchedulePage() {
     }
   }
 
+  async function handleEventDecline(
+    referenceCandidate: ScheduleDraft,
+    member: ScheduleMember,
+    candidateIds: string[],
+    groupKey: string,
+  ) {
+    if (!data || busy) return;
+
+    const previousData = data;
+    setBusy(true);
+
+    try {
+      const response = await fetch("/api/schedule", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "decline",
+          candidateId: referenceCandidate.id,
+          person: member,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error("Failed to mark decline");
+      }
+
+      const created = (await response.json()) as ScheduleDraft;
+      setData((prev) => {
+        if (!prev) return prev;
+
+        const candidateIdSet = new Set(candidateIds);
+        const drafts = prev.drafts.filter((draft) => {
+          if (isDeclineDraft(draft) && draft.person === member && getDeclineGroupKey(draft) === groupKey) {
+            return false;
+          }
+
+          if (draft.person !== member || !draft.memo?.includes("candidate:")) {
+            return true;
+          }
+
+          const candidateId = draft.memo.match(/candidate:([^\s]+)/)?.[1];
+          return !(candidateId && candidateIdSet.has(candidateId));
+        });
+
+        return patchScheduleData(prev, { drafts: sortDrafts([...drafts, created]) });
+      });
+    } catch (error) {
+      setData(previousData);
+      setFormMessage(error instanceof Error ? error.message : "Update failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleUndoDecline(
+    groupDrafts: ScheduleDraft[],
+    member: ScheduleMember,
+    groupKey: string,
+  ) {
+    if (!data || busy) return;
+
+    const declineDraft = groupDrafts.find(
+      (draft) =>
+        isDeclineDraft(draft) &&
+        draft.person === member &&
+        getDeclineGroupKey(draft) === groupKey,
+    );
+
+    if (!declineDraft) return;
+
+    const previousData = data;
+    setBusy(true);
+
+    try {
+      const response = await fetch(`/api/schedule/${declineDraft.id}`, { method: "DELETE" });
+      if (!response.ok) {
+        throw new Error("Failed to undo decline");
+      }
+
+      setData((prev) =>
+        prev
+          ? patchScheduleData(prev, {
+              drafts: prev.drafts.filter((draft) => draft.id !== declineDraft.id),
+            })
+          : prev,
+      );
+    } catch (error) {
+      setData(previousData);
+      setFormMessage(error instanceof Error ? error.message : "Update failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleCopyReminder(
+    title: string,
+    groupDrafts: ScheduleDraft[],
+    candidates: ScheduleDraft[],
+    groupKey: string,
+  ) {
+    const pending = getPendingMembers(groupDrafts, candidates, groupKey);
+    const deadline =
+      window.prompt(
+        enJa("Response deadline (optional)", "回答期限（任意）"),
+        "",
+      )?.trim() ?? "";
+
+    const text = buildRsvpReminderText({ title, pending, deadline });
+
+    try {
+      await navigator.clipboard.writeText(text);
+      setFormMessage(enJa("Reminder copied to clipboard", "リマインド文をコピーしました"));
+    } catch {
+      setFormMessage(enJa("Could not copy to clipboard", "クリップボードにコピーできませんでした"));
+    }
+
+    window.setTimeout(() => setFormMessage(null), 4000);
+  }
+
   async function handleDeleteCandidate(candidateId: string) {
     if (busy) return;
-    if (!window.confirm("この候補を削除しますか？")) return;
+    if (!window.confirm(enJa("Delete this candidate?", "この候補を削除しますか？"))) return;
 
     setBusy(true);
     setDeletingId(candidateId);
@@ -607,9 +911,10 @@ export default function SchedulePage() {
     }
   }
 
-  async function handleDeleteGroup(candidateIds: string[]) {
+  async function handleDeleteGroup(candidateIds: string[], groupKey: string) {
     if (busy || candidateIds.length === 0) return;
-    if (!window.confirm("このイベントの候補をすべて削除しますか？")) return;
+    if (!window.confirm(enJa("Delete all candidates for this event?", "このイベントの候補をすべて削除しますか？")))
+      return;
 
     setBusy(true);
     setFormMessage(null);
@@ -628,12 +933,9 @@ export default function SchedulePage() {
       setData((prev) => {
         if (!prev) return prev;
 
-        let drafts = prev.drafts;
-        for (const candidateId of candidateIds) {
-          drafts = removeCandidateFromDrafts(drafts, candidateId);
-        }
-
-        return patchScheduleData(prev, { drafts });
+        return patchScheduleData(prev, {
+          drafts: removeGroupFromDrafts(prev.drafts, groupKey, candidateIds),
+        });
       });
       setFormMessage("候補を削除しました");
     } catch (error) {
@@ -720,9 +1022,13 @@ export default function SchedulePage() {
               ICL Team Schedule
             </p>
             <h1 className="mt-1 text-2xl font-semibold text-slate-800 sm:text-3xl">
-              予定調整
+              {enJa("Team Schedule", "予定調整")}
             </h1>
-            <p className="mt-2 max-w-xl text-sm text-slate-500">
+            <p className="mt-2 max-w-xl text-sm text-slate-600">
+              Drafts sync to Schedule Drafts; confirmed events go to Calendar of availability. All
+              times are JST.
+            </p>
+            <p className="mt-1 max-w-xl text-xs text-slate-400">
               調整中は Schedule Drafts、確定後は Calendar of availability に反映されます。表示はすべて日本時間（JST）です。
             </p>
           </div>
@@ -735,8 +1041,8 @@ export default function SchedulePage() {
         </header>
 
         <div className="mb-6 grid gap-4 sm:grid-cols-2">
-          <SummaryCard label="調整中の候補" value={draftCount} />
-          <SummaryCard label="確定済み" value={confirmedCount} />
+          <SummaryCard label={enJa("Open polls", "調整中の候補")} value={draftCount} />
+          <SummaryCard label={enJa("Confirmed", "確定済み")} value={confirmedCount} />
         </div>
 
         {loadState === "error" && (
@@ -753,12 +1059,12 @@ export default function SchedulePage() {
 
         <details className={`mb-8 rounded-2xl border border-slate-200 bg-white ${CARD_SHADOW}`}>
           <summary className="cursor-pointer list-none px-6 py-4 text-sm font-semibold text-slate-700">
-            ＋ 候補日時を追加
+            {enJa("+ Add candidate slot", "＋ 候補日時を追加")}
           </summary>
           <form onSubmit={handleCreateCandidate} className="border-t border-slate-100 px-6 pb-6 pt-4">
             <div className="grid gap-4 md:grid-cols-2">
               <label className="block md:col-span-2">
-                <span className="text-xs text-slate-500">タイトル</span>
+                <span className="text-xs text-slate-500">{enJa("Title", "タイトル")}</span>
                 <input
                   value={title}
                   onChange={(event) => setTitle(event.target.value)}
@@ -768,7 +1074,7 @@ export default function SchedulePage() {
               </label>
 
               <label className="block">
-                <span className="text-xs text-slate-500">カテゴリ</span>
+                <span className="text-xs text-slate-500">{enJa("Category", "カテゴリ")}</span>
                 <select
                   value={category}
                   onChange={(event) => setCategory(event.target.value as ScheduleCategory)}
@@ -783,7 +1089,7 @@ export default function SchedulePage() {
               </label>
 
               <label className="block">
-                <span className="text-xs text-slate-500">提案者</span>
+                <span className="text-xs text-slate-500">{enJa("Proposer", "提案者")}</span>
                 <select
                   value={person}
                   onChange={(event) => setPerson(event.target.value as ScheduleMember)}
@@ -798,7 +1104,7 @@ export default function SchedulePage() {
               </label>
 
               <label className="block">
-                <span className="text-xs text-slate-500">開始日時</span>
+                <span className="text-xs text-slate-500">{enJa("Start", "開始日時")}</span>
                 <input
                   type="datetime-local"
                   step={900}
@@ -809,7 +1115,7 @@ export default function SchedulePage() {
               </label>
 
               <label className="block">
-                <span className="text-xs text-slate-500">所要時間（分）</span>
+                <span className="text-xs text-slate-500">{enJa("Duration (min)", "所要時間（分）")}</span>
                 <input
                   type="number"
                   min={15}
@@ -827,7 +1133,7 @@ export default function SchedulePage() {
                 disabled={busy || loadState !== "success"}
                 className="rounded-full bg-blue-600 px-5 py-2.5 text-sm font-medium text-white transition-colors hover:bg-blue-700 disabled:cursor-wait disabled:opacity-60"
               >
-                候補を追加
+                {enJa("Add slot", "候補を追加")}
               </button>
               {pollId && (
                 <button
@@ -835,7 +1141,7 @@ export default function SchedulePage() {
                   onClick={() => setPollId(null)}
                   className="rounded-full border border-slate-200 px-4 py-2 text-sm text-slate-600 hover:bg-slate-50"
                 >
-                  新しい調整を開始
+                  {enJa("Start new poll", "新しい調整を開始")}
                 </button>
               )}
             </div>
@@ -854,7 +1160,7 @@ export default function SchedulePage() {
                   : "border border-slate-200 bg-white text-slate-600"
               }`}
             >
-              {value === "drafts" ? "調整中" : "確定済み"}
+              {value === "drafts" ? enJa("Open", "調整中") : enJa("Confirmed", "確定済み")}
             </button>
           ))}
           {section === "confirmed" && (
@@ -871,7 +1177,7 @@ export default function SchedulePage() {
                       : "border border-slate-200 bg-white text-slate-600"
                   }`}
                 >
-                  {value === "list" ? "一覧" : "月カレンダー"}
+                  {value === "list" ? enJa("List", "一覧") : enJa("Month", "月カレンダー")}
                 </button>
               ))}
               <span className="mx-1 w-px self-stretch bg-slate-200" />
@@ -886,9 +1192,7 @@ export default function SchedulePage() {
                       : "border border-slate-200 bg-white text-slate-600"
                   }`}
                 >
-                  {value === "all"
-                    ? "すべて"
-                    : CONFIRMED_CATEGORY_LABELS[value as AppEventCategory]}
+                  {value === "all" ? enJa("All", "すべて") : CONFIRMED_CATEGORY_LABELS[value as AppEventCategory]}
                 </button>
               ))}
             </>
@@ -903,7 +1207,7 @@ export default function SchedulePage() {
                 }
                 className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm text-slate-600"
               >
-                <option value="all">全カテゴリ</option>
+                <option value="all">{enJa("All categories", "全カテゴリ")}</option>
                 {SCHEDULE_CATEGORIES.map((item) => (
                   <option key={item} value={item}>
                     {item.split(" / ")[0]}
@@ -924,17 +1228,23 @@ export default function SchedulePage() {
           <div className="space-y-5">
             {pollGroups.length === 0 ? (
               <div className="rounded-xl border border-dashed border-slate-200 bg-white/60 px-6 py-10 text-center text-sm text-slate-400">
-                調整中の候補はありません
+                {enJa("No open polls", "調整中の候補はありません")}
               </div>
             ) : (
-              pollGroups.map((group) =>
-                group.headline ? (
+              pollGroups.map((group) => {
+                const groupDrafts = data
+                  ? getGroupDraftsForCandidates(data.drafts, group.items)
+                  : [];
+                const candidateIds = group.items.map((item) => item.id);
+
+                return group.headline ? (
                   <PollGroupCard
                     key={group.groupId}
-                    groupId={group.groupId}
+                    groupKey={group.groupKey}
                     displayTitle={group.displayTitle}
                     headline={group.headline}
                     candidates={group.items}
+                    groupDrafts={groupDrafts}
                     availabilityByCandidate={availabilityByCandidate}
                     busy={busy}
                     confirmingId={confirmingId}
@@ -950,12 +1260,26 @@ export default function SchedulePage() {
                     onDeleteCandidate={(candidateId) => {
                       void handleDeleteCandidate(candidateId);
                     }}
-                    onDeleteGroup={(candidateIds) => {
-                      void handleDeleteGroup(candidateIds);
+                    onDeleteGroup={(ids) => {
+                      void handleDeleteGroup(ids, group.groupKey);
+                    }}
+                    onEventDecline={(member) => {
+                      void handleEventDecline(group.headline, member, candidateIds, group.groupKey);
+                    }}
+                    onUndoDecline={(member) => {
+                      void handleUndoDecline(groupDrafts, member, group.groupKey);
+                    }}
+                    onCopyReminder={() => {
+                      void handleCopyReminder(
+                        group.displayTitle,
+                        groupDrafts,
+                        group.items,
+                        group.groupKey,
+                      );
                     }}
                   />
-                ) : null,
-              )
+                ) : null;
+              })
             )}
           </div>
         ) : viewMode === "calendar" ? (
@@ -966,9 +1290,12 @@ export default function SchedulePage() {
           />
         ) : filteredConfirmed.length === 0 ? (
           <div className="rounded-xl border border-dashed border-slate-200 bg-white/60 px-6 py-10 text-center text-sm text-slate-400">
-            確定済みのイベントはありません
+            {enJa("No confirmed events", "確定済みのイベントはありません")}
             <p className="mt-2 text-xs text-slate-400">
-              アプリから確定した [MTG] / [Event] / [Other] のみ表示します。編集は Notion で行ってください。
+              {enJa(
+                "Shows app-confirmed [MTG] / [Event] / [Other] only. Edit in Notion.",
+                "アプリから確定した [MTG] / [Event] / [Other] のみ表示します。編集は Notion で行ってください。",
+              )}
             </p>
           </div>
         ) : confirmedCategoryFilter === "all" ? (

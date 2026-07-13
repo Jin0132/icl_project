@@ -1,4 +1,10 @@
 import Link from "next/link";
+import { serializeHubConfirmedEvents } from "@/lib/hub-confirmed-events";
+import { fetchScheduleResponse } from "@/lib/notion/schedule";
+import { enJa } from "@/lib/ui/bilingual";
+import { HubConfirmedCalendar } from "./HubConfirmedCalendar";
+
+export const dynamic = "force-dynamic";
 
 const CARD_SHADOW = "shadow-[0_4px_24px_rgba(0,0,0,0.06)]";
 
@@ -6,8 +12,8 @@ type HubDestination = {
   href: string;
   icon: string;
   title: string;
-  titleJa: string;
-  description: string;
+  descriptionEn: string;
+  descriptionJa: string;
   available: boolean;
   accent: string;
 };
@@ -16,36 +22,36 @@ const DESTINATIONS: HubDestination[] = [
   {
     href: "/projects",
     icon: "📊",
-    title: "Project Hub",
-    titleJa: "課題・プロジェクト",
-    description: "今週のタスク、議題、プロジェクト一覧の管理",
+    title: enJa("Project Hub", "課題・プロジェクト"),
+    descriptionEn: "Weekly tasks, meeting agenda, and project tracker",
+    descriptionJa: "今週のタスク、議題、プロジェクト一覧の管理",
     available: true,
     accent: "border-l-blue-500 hover:border-blue-200",
   },
   {
     href: "/schedule",
     icon: "📅",
-    title: "Team Schedule",
-    titleJa: "予定調整",
-    description: "候補日の調整、参加可能の回答、確定カレンダー",
+    title: enJa("Team Schedule", "予定調整"),
+    descriptionEn: "Poll candidate dates, mark availability, view confirmed events",
+    descriptionJa: "候補日の調整、参加可能の回答、確定カレンダー",
     available: true,
     accent: "border-l-emerald-500 hover:border-emerald-200",
   },
   {
     href: "/ops",
     icon: "👥",
-    title: "Team & Operations",
-    titleJa: "メンバー・運営",
-    description: "メンバー管理・運営（準備中）",
+    title: enJa("Team & Operations", "メンバー・運営"),
+    descriptionEn: "Member and operations management",
+    descriptionJa: "メンバー管理・運営",
     available: false,
     accent: "border-l-violet-500",
   },
   {
     href: "/market",
     icon: "📣",
-    title: "Market",
-    titleJa: "マーケティング",
-    description: "マーケ施策・広報（準備中）",
+    title: enJa("Market", "マーケティング"),
+    descriptionEn: "Marketing and communications",
+    descriptionJa: "マーケ施策・広報",
     available: false,
     accent: "border-l-orange-500",
   },
@@ -60,19 +66,17 @@ function HubCard({ destination }: { destination: HubDestination }) {
         </span>
         {!destination.available && (
           <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-[11px] font-medium text-slate-500">
-            準備中
+            {enJa("Coming soon", "準備中")}
           </span>
         )}
       </div>
       <div className="mt-4">
-        <p className="text-[11px] font-semibold tracking-[0.14em] text-slate-400 uppercase">
-          {destination.title}
-        </p>
-        <h2 className="mt-1 text-lg font-semibold text-slate-800">{destination.titleJa}</h2>
-        <p className="mt-2 text-sm leading-relaxed text-slate-500">{destination.description}</p>
+        <h2 className="text-lg font-semibold text-slate-800">{destination.title}</h2>
+        <p className="mt-2 text-sm leading-relaxed text-slate-600">{destination.descriptionEn}</p>
+        <p className="mt-1 text-xs leading-relaxed text-slate-400">{destination.descriptionJa}</p>
       </div>
       {destination.available && (
-        <p className="mt-4 text-sm font-medium text-blue-600">開く →</p>
+        <p className="mt-4 text-sm font-medium text-blue-600">{enJa("Open", "開く")} →</p>
       )}
     </>
   );
@@ -94,18 +98,30 @@ function HubCard({ destination }: { destination: HubDestination }) {
   );
 }
 
-export default function HubPage() {
+export default async function HubPage() {
+  let confirmedEvents = serializeHubConfirmedEvents([]);
+
+  try {
+    const data = await fetchScheduleResponse();
+    confirmedEvents = serializeHubConfirmedEvents(data.confirmed);
+  } catch {
+    confirmedEvents = [];
+  }
+
   return (
     <main className="min-h-screen px-4 py-10 sm:px-6 sm:py-14">
       <div className="mx-auto max-w-4xl">
-        <header className="mb-10 text-center sm:mb-12">
+        <header className="mb-8 text-center sm:mb-10">
           <p className="text-xs font-semibold tracking-[0.18em] text-slate-400 uppercase">
             ICL Internal Portal
           </p>
           <h1 className="mt-2 text-2xl font-semibold tracking-[0.14em] text-slate-800 uppercase sm:text-3xl">
             ICL Hub
           </h1>
-          <p className="mx-auto mt-3 max-w-lg text-sm text-slate-500">
+          <p className="mx-auto mt-3 max-w-xl text-sm text-slate-600">
+            Choose a workspace to open. Project tasks and team scheduling live on separate pages.
+          </p>
+          <p className="mx-auto mt-1 max-w-xl text-xs text-slate-400">
             見たい情報を選んでください。課題管理と予定調整はそれぞれ専用ページで操作できます。
           </p>
 
@@ -116,6 +132,8 @@ export default function HubPage() {
           </div>
         </header>
 
+        <HubConfirmedCalendar events={confirmedEvents} />
+
         <div className="grid gap-4 sm:grid-cols-2">
           {DESTINATIONS.map((destination) => (
             <HubCard key={destination.href} destination={destination} />
@@ -123,7 +141,7 @@ export default function HubPage() {
         </div>
 
         <p className="mt-10 text-center text-xs text-slate-400">
-          部署ごとの専用ページは順次追加予定です。
+          {enJa("Department pages will be added over time.", "部署ごとの専用ページは順次追加予定です。")}
         </p>
       </div>
     </main>

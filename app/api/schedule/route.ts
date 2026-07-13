@@ -3,6 +3,7 @@ import {
   createCandidateSlot,
   fetchScheduleResponse,
   markAvailable,
+  markEventDecline,
 } from "@/lib/notion/schedule";
 import {
   SCHEDULE_CATEGORIES,
@@ -14,7 +15,7 @@ import {
 } from "@/lib/notion/schedule-schema";
 
 type CreateScheduleBody = {
-  action?: "candidate" | "available";
+  action?: "candidate" | "available" | "decline";
   title?: string;
   category?: ScheduleCategory;
   person?: ScheduleMember;
@@ -65,6 +66,22 @@ export async function POST(
       }
 
       const draft = await markAvailable({
+        candidateId: body.candidateId,
+        person: body.person,
+      });
+
+      return NextResponse.json(draft, { status: 201 });
+    }
+
+    if (action === "decline") {
+      if (!body.candidateId || !body.person || !isScheduleMember(body.person)) {
+        return NextResponse.json(
+          { error: "candidateId and person are required" },
+          { status: 400 },
+        );
+      }
+
+      const draft = await markEventDecline({
         candidateId: body.candidateId,
         person: body.person,
       });

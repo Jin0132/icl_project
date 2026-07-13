@@ -1,5 +1,6 @@
 import type { AppEventCategory } from "@/lib/notion/notion-datetime";
 import type { ConfirmedEvent } from "@/lib/notion/schedule-schema";
+import { enJa } from "@/lib/ui/bilingual";
 
 const WEEKDAYS = ["日", "月", "火", "水", "木", "金", "土"] as const;
 
@@ -136,7 +137,9 @@ export function MonthCalendar({
         })}
       </div>
 
-      <p className="mt-3 text-xs text-slate-400">閲覧専用。編集は Notion で行ってください。</p>
+      <p className="mt-3 text-xs text-slate-400">
+        {enJa("Read-only. Edit in Notion.", "閲覧専用。編集は Notion で行ってください。")}
+      </p>
     </div>
   );
 }
