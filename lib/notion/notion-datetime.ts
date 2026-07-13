@@ -118,7 +118,79 @@ export function formatScheduleDateTime(value: string, isDatetime: boolean): stri
   }).format(date);
 }
 
+export function formatScheduleDateLabel(value: string, isDatetime: boolean): string {
+  const date = toJapanDate(value, isDatetime);
+  if (Number.isNaN(date.getTime())) {
+    return value.slice(0, 10);
+  }
+
+  return new Intl.DateTimeFormat("ja-JP", {
+    timeZone: NOTION_TIME_ZONE,
+    month: "long",
+    day: "numeric",
+    weekday: "short",
+  }).format(date);
+}
+
+export function formatScheduleTimeOnly(value: string, isDatetime: boolean): string {
+  const date = toJapanDate(value, isDatetime);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+
+  if (!isDatetime) {
+    return "終日";
+  }
+
+  return new Intl.DateTimeFormat("ja-JP", {
+    timeZone: NOTION_TIME_ZONE,
+    hour: "2-digit",
+    minute: "2-digit",
+  }).format(date);
+}
+
+export function formatScheduleTimeRange(
+  start: string,
+  end: string | null,
+  isDatetime: boolean,
+): string {
+  const startLabel = formatScheduleTimeOnly(start, isDatetime);
+  if (!end || !isDatetime) {
+    return startLabel;
+  }
+
+  return `${startLabel}–${formatScheduleTimeOnly(end, isDatetime)}`;
+}
+
+export function getScheduleDateKey(value: string, isDatetime: boolean): string {
+  const date = toJapanDate(value, isDatetime);
+  if (Number.isNaN(date.getTime())) {
+    return value.slice(0, 10);
+  }
+
+  const parts = new Intl.DateTimeFormat("sv-SE", {
+    timeZone: NOTION_TIME_ZONE,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(date);
+
+  const get = (type: string) => parts.find((part) => part.type === type)?.value ?? "01";
+  return `${get("year")}-${get("month")}-${get("day")}`;
+}
+
+export type AppEventCategory = "MTG" | "Event" | "Other";
+
 /** アプリから確定したイベントのみ（[MTG] / [Event] / [Other] プレフィックス） */
 export function isAppConfirmedEvent(name: string): boolean {
   return /^\[(MTG|Event|Other)\]\s/.test(name);
+}
+
+export function parseAppEventCategory(name: string): AppEventCategory | null {
+  const match = name.match(/^\[(MTG|Event|Other)\]\s/);
+  return match ? (match[1] as AppEventCategory) : null;
+}
+
+export function stripAppEventPrefix(name: string): string {
+  return name.replace(/^\[(MTG|Event|Other)\]\s/, "");
 }

@@ -2,6 +2,7 @@ export const SCHEDULE_DRAFT_PROPERTIES = {
   title: "Title / 名前",
   category: "Category / カテゴリ",
   person: "Person / メンバー",
+  creator: "Created by / 作成者",
   date: "Date / 日時",
   type: "Type / 種別",
   status: "Status / ステータス",
@@ -45,6 +46,7 @@ export interface ScheduleDraft {
   title: string;
   category: ScheduleCategory | null;
   person: ScheduleMember | null;
+  creator: ScheduleMember | null;
   start: string;
   end: string | null;
   isDatetime: boolean;
@@ -86,3 +88,17 @@ export const MEMBER_CALENDAR_TAGS: Record<ScheduleMember, string> = {
   Theo: "🟢Theo",
   Makiko: "🔵MAKIKO",
 };
+
+const MEMBER_NAME_PATTERN = SCHEDULE_MEMBERS.join("|");
+
+/** タイトル末尾の「— 作成者名」を除去（旧データ互換） */
+export function normalizeScheduleEventTitle(title: string): string {
+  const pattern = new RegExp(`\\s*[—–-]\\s*(${MEMBER_NAME_PATTERN})\\s*$`, "i");
+  return title.replace(pattern, "").trim();
+}
+
+export function getScheduleDraftGroupKey(draft: Pick<ScheduleDraft, "id" | "pollId" | "title">): string {
+  const poll = draft.pollId ?? draft.id;
+  const title = normalizeScheduleEventTitle(draft.title).toLowerCase();
+  return `${poll}::${title}`;
+}

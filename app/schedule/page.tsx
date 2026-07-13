@@ -2,7 +2,16 @@
 
 import Link from "next/link";
 import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
-import { formatScheduleDateTime } from "@/lib/notion/notion-datetime";
+import {
+  formatScheduleDateLabel,
+  formatScheduleDateTime,
+  formatScheduleTimeRange,
+  getScheduleDateKey,
+  parseAppEventCategory,
+  stripAppEventPrefix,
+  type AppEventCategory,
+} from "@/lib/notion/notion-datetime";
+import { MonthCalendar } from "./MonthCalendar";
 import type {
   ConfirmedEvent,
   ScheduleApiResponse,
@@ -13,11 +22,21 @@ import type {
 import {
   SCHEDULE_CATEGORIES,
   SCHEDULE_MEMBERS,
+  getScheduleDraftGroupKey,
+  normalizeScheduleEventTitle,
 } from "@/lib/notion/schedule-schema";
 
 type LoadState = "loading" | "success" | "error";
 type SectionFilter = "drafts" | "confirmed";
+type ConfirmedCategoryFilter = "all" | AppEventCategory;
+
 type ViewMode = "list" | "calendar";
+
+const CONFIRMED_CATEGORY_LABELS: Record<AppEventCategory, string> = {
+  MTG: "会議（MTG）",
+  Event: "イベント",
+  Other: "その他",
+};
 
 const CARD_SHADOW = "shadow-[0_4px_24px_rgba(0,0,0,0.06)]";
 
@@ -35,10 +54,6 @@ const CATEGORY_STYLES: Record<string, { border: string; pill: string }> = {
     pill: "bg-slate-50 text-slate-700 border-slate-200",
   },
 };
-
-function toDateKey(value: string): string {
-  return value.slice(0, 10);
-}
 
 function addMinutesToLocalDatetime(localValue: string, minutes: number): string {
   const date = new Date(localValue);
@@ -76,7 +91,7 @@ function groupCandidates(drafts: ScheduleDraft[]) {
   const groups = new Map<string, ScheduleDraft[]>();
 
   for (const candidate of candidates) {
-    const key = candidate.pollId ?? candidate.id;
+    const key = getScheduleDraftGroupKey(candidate);
     const list = groups.get(key) ?? [];
     list.push(candidate);
     groups.set(key, list);
@@ -85,12 +100,49 @@ function groupCandidates(drafts: ScheduleDraft[]) {
   return [...groups.entries()]
     .map(([groupId, items]) => ({
       groupId,
+      pollId: items[0]?.pollId ?? items[0]?.id ?? groupId,
       items: items.sort((left, right) => left.start.localeCompare(right.start)),
       headline: items[0],
+      displayTitle: normalizeScheduleEventTitle(items[0]?.title ?? ""),
     }))
     .sort((left, right) =>
       (left.headline?.start ?? "").localeCompare(right.headline?.start ?? ""),
     );
+}
+
+function sortDrafts(drafts: ScheduleDraft[]): ScheduleDraft[] {
+  return [...drafts].sort((left, right) => left.start.localeCompare(right.start));
+}
+
+function sortConfirmed(confirmed: ConfirmedEvent[]): ConfirmedEvent[] {
+  return [...confirmed].sort((left, right) => left.start.localeCompare(right.start));
+}
+
+function patchScheduleData(
+  prev: ScheduleApiResponse,
+  patch: Partial<Pick<ScheduleApiResponse, "drafts" | "confirmed">>,
+): ScheduleApiResponse {
+  const drafts = patch.drafts ?? prev.drafts;
+  const confirmed = patch.confirmed ?? prev.confirmed;
+
+  return {
+    ...prev,
+    drafts,
+    confirmed,
+    meta: {
+      ...prev.meta,
+      fetchedAt: new Date().toISOString(),
+      draftsCount: drafts.length,
+      confirmedCount: confirmed.length,
+    },
+  };
+}
+
+function removeCandidateFromDrafts(drafts: ScheduleDraft[], candidateId: string): ScheduleDraft[] {
+  return drafts.filter(
+    (draft) =>
+      draft.id !== candidateId && !draft.memo?.includes(`candidate:${candidateId}`),
+  );
 }
 
 function SummaryCard({ label, value }: { label: string; value: number }) {
@@ -102,122 +154,232 @@ function SummaryCard({ label, value }: { label: string; value: number }) {
   );
 }
 
+function groupCandidatesByDate(candidates: ScheduleDraft[]) {
+  const groups = new Map<string, ScheduleDraft[]>();
+
+  for (const candidate of candidates) {
+    const key = getScheduleDateKey(candidate.start, candidate.isDatetime);
+    const list = groups.get(key) ?? [];
+    list.push(candidate);
+    groups.set(key, list);
+  }
+
+  return [...groups.entries()]
+    .map(([dateKey, items]) => ({
+      dateKey,
+      label: formatScheduleDateLabel(items[0].start, items[0].isDatetime),
+      items: items.sort((left, right) => left.start.localeCompare(right.start)),
+    }))
+    .sort((left, right) => left.dateKey.localeCompare(right.dateKey));
+}
+
+const SLOTS_COLLAPSED_LIMIT = 6;
+
 function PollGroupCard({
+  groupId,
+  displayTitle,
   headline,
   candidates,
   availabilityByCandidate,
   busy,
   confirmingId,
+  deletingId,
   onToggleAvailability,
   onRequestConfirm,
   onCancelConfirm,
   onConfirm,
+  onDeleteCandidate,
+  onDeleteGroup,
 }: {
+  groupId: string;
+  displayTitle: string;
   headline: ScheduleDraft;
   candidates: ScheduleDraft[];
   availabilityByCandidate: Map<string, ScheduleDraft[]>;
   busy: boolean;
   confirmingId: string | null;
+  deletingId: string | null;
   onToggleAvailability: (candidate: ScheduleDraft, member: ScheduleMember) => void;
   onRequestConfirm: (candidateId: string) => void;
   onCancelConfirm: () => void;
   onConfirm: (candidateId: string) => void;
+  onDeleteCandidate: (candidateId: string) => void;
+  onDeleteGroup: (candidateIds: string[]) => void;
 }) {
   const style =
     CATEGORY_STYLES[headline.category ?? ""] ?? CATEGORY_STYLES["Other / その他"];
+  const dateGroups = useMemo(() => groupCandidatesByDate(candidates), [candidates]);
+  const [expandedDates, setExpandedDates] = useState<Set<string>>(() => new Set());
+
+  function toggleDateExpanded(dateKey: string) {
+    setExpandedDates((current) => {
+      const next = new Set(current);
+      if (next.has(dateKey)) {
+        next.delete(dateKey);
+      } else {
+        next.add(dateKey);
+      }
+      return next;
+    });
+  }
 
   return (
     <div className={`rounded-2xl border border-slate-200 bg-white ${CARD_SHADOW}`}>
       <div className={`border-b border-slate-100 px-5 py-4 border-l-4 ${style.border}`}>
-        <div className="flex flex-wrap items-center gap-2">
-          {headline.category && (
-            <span className={`rounded-full border px-2.5 py-1 text-xs font-medium ${style.pill}`}>
-              {headline.category.split(" / ")[0]}
-            </span>
-          )}
-          <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs text-slate-600">
-            候補 {candidates.length}件
-          </span>
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div className="min-w-0 flex-1">
+            <div className="flex flex-wrap items-center gap-2">
+              {headline.category && (
+                <span className={`rounded-full border px-2.5 py-1 text-xs font-medium ${style.pill}`}>
+                  {headline.category.split(" / ")[0]}
+                </span>
+              )}
+              <span className="rounded-full border border-slate-200 bg-slate-50 px-2.5 py-1 text-xs text-slate-600">
+                候補 {candidates.length}件 · {dateGroups.length}日
+              </span>
+            </div>
+            <h3 className="mt-2 text-lg font-semibold text-slate-800">{displayTitle}</h3>
+            <p className="mt-1 text-sm text-slate-500">
+              作成者: {headline.creator ?? headline.person ?? "—"}
+            </p>
+          </div>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => onDeleteGroup(candidates.map((candidate) => candidate.id))}
+            className="shrink-0 rounded-xl border border-red-300 bg-red-50 px-4 py-2 text-sm font-medium text-red-700 hover:bg-red-100 disabled:opacity-60"
+          >
+            この調整を削除
+          </button>
         </div>
-        <h3 className="mt-2 text-lg font-semibold text-slate-800">{headline.title}</h3>
-        <p className="mt-1 text-sm text-slate-500">提案: {headline.person ?? "—"}</p>
       </div>
 
       <div className="divide-y divide-slate-100">
-        {candidates.map((candidate) => {
-          const availability = availabilityByCandidate.get(candidate.id) ?? [];
+        {dateGroups.map((dateGroup) => {
+          const showAll = expandedDates.has(dateGroup.dateKey);
+          const hiddenCount = Math.max(0, dateGroup.items.length - SLOTS_COLLAPSED_LIMIT);
+          const visibleItems =
+            showAll || hiddenCount === 0
+              ? dateGroup.items
+              : dateGroup.items.slice(0, SLOTS_COLLAPSED_LIMIT);
 
           return (
-            <div key={candidate.id} className="px-5 py-4">
-              <div className="flex flex-wrap items-start justify-between gap-4">
-                <div>
-                  <p className="text-sm font-medium text-slate-800">
-                    {formatScheduleDateTime(candidate.start, candidate.isDatetime)}
-                  </p>
-                  <p className="mt-1 text-xs text-slate-400">
-                    参加可能:{" "}
-                    {availability.map((item) => item.person).filter(Boolean).join("、") || "なし"}
-                  </p>
-                </div>
+            <section key={dateGroup.dateKey} className="px-4 py-4 sm:px-5">
+              <div className="mb-3 flex flex-wrap items-center justify-between gap-2">
+                <h4 className="text-sm font-semibold text-slate-700">{dateGroup.label}</h4>
+                <span className="text-xs text-slate-400">{dateGroup.items.length}枠</span>
+              </div>
 
-                <div className="flex flex-col items-end gap-2">
-                  <div className="flex flex-wrap justify-end gap-2">
-                    {SCHEDULE_MEMBERS.map((member) => {
-                      const active = availability.some((item) => item.person === member);
+              <div className="overflow-x-auto rounded-xl border border-slate-100">
+                <table className="min-w-full text-left text-sm">
+                  <thead className="bg-slate-50 text-xs text-slate-500">
+                    <tr>
+                      <th className="px-3 py-2 font-medium whitespace-nowrap">時間</th>
+                      <th className="px-3 py-2 font-medium">参加可能</th>
+                      <th className="px-3 py-2 font-medium text-right whitespace-nowrap">操作</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                    {visibleItems.map((candidate) => {
+                      const availability = availabilityByCandidate.get(candidate.id) ?? [];
+                      const isConfirming = confirmingId === candidate.id;
+
                       return (
-                        <button
-                          key={member}
-                          type="button"
-                          disabled={busy}
-                          onClick={() => onToggleAvailability(candidate, member)}
-                          className={`rounded-full px-3 py-1.5 text-xs font-medium ${
-                            active
-                              ? "bg-emerald-600 text-white"
-                              : "border border-slate-200 bg-white text-slate-600"
-                          }`}
-                        >
-                          {member}
-                        </button>
+                        <tr key={candidate.id} className="align-top">
+                          <td className="px-3 py-3 whitespace-nowrap text-slate-800">
+                            {formatScheduleTimeRange(
+                              candidate.start,
+                              candidate.end,
+                              candidate.isDatetime,
+                            )}
+                          </td>
+                          <td className="px-3 py-3">
+                            <div className="flex flex-wrap gap-1.5">
+                              {SCHEDULE_MEMBERS.map((member) => {
+                                const active = availability.some((item) => item.person === member);
+                                return (
+                                  <button
+                                    key={member}
+                                    type="button"
+                                    disabled={busy}
+                                    onClick={() => onToggleAvailability(candidate, member)}
+                                    className={`rounded-full px-2.5 py-1 text-xs font-medium ${
+                                      active
+                                        ? "bg-emerald-600 text-white"
+                                        : "border border-slate-200 bg-white text-slate-600"
+                                    }`}
+                                  >
+                                    {member}
+                                  </button>
+                                );
+                              })}
+                            </div>
+                            <p className="mt-1 text-[11px] text-slate-400">
+                              {availability.map((item) => item.person).filter(Boolean).join("、") ||
+                                "未回答"}
+                            </p>
+                          </td>
+                          <td className="px-3 py-3 text-right whitespace-nowrap">
+                            {isConfirming ? (
+                              <div className="inline-block max-w-xs rounded-xl border border-amber-200 bg-amber-50 p-2 text-left">
+                                <p className="text-[11px] text-amber-900">この時間で確定しますか？</p>
+                                <div className="mt-2 flex justify-end gap-1.5">
+                                  <button
+                                    type="button"
+                                    onClick={onCancelConfirm}
+                                    className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px] text-slate-600"
+                                  >
+                                    戻る
+                                  </button>
+                                  <button
+                                    type="button"
+                                    disabled={busy}
+                                    onClick={() => onConfirm(candidate.id)}
+                                    className="rounded-lg bg-emerald-600 px-2 py-1 text-[11px] font-medium text-white"
+                                  >
+                                    確定
+                                  </button>
+                                </div>
+                              </div>
+                            ) : (
+                              <div className="inline-flex flex-col items-end gap-1.5 sm:flex-row sm:items-center">
+                                <button
+                                  type="button"
+                                  disabled={busy}
+                                  onClick={() => onRequestConfirm(candidate.id)}
+                                  className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white hover:bg-emerald-700"
+                                >
+                                  確定
+                                </button>
+                                <button
+                                  type="button"
+                                  disabled={busy || deletingId === candidate.id}
+                                  onClick={() => onDeleteCandidate(candidate.id)}
+                                  className="rounded-lg border border-red-300 bg-red-50 px-3 py-1.5 text-xs font-medium text-red-700 hover:bg-red-100 disabled:opacity-60"
+                                  title="この候補を削除"
+                                >
+                                  {deletingId === candidate.id ? "削除中…" : "削除"}
+                                </button>
+                              </div>
+                            )}
+                          </td>
+                        </tr>
                       );
                     })}
-                  </div>
-
-                  {confirmingId === candidate.id ? (
-                    <div className="max-w-sm rounded-xl border border-amber-200 bg-amber-50 p-3 text-right">
-                      <p className="text-xs text-amber-900">
-                        この時間で確定しますか？ Calendar of availability に書き出されます。
-                      </p>
-                      <div className="mt-2 flex justify-end gap-2">
-                        <button
-                          type="button"
-                          onClick={onCancelConfirm}
-                          className="rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs text-slate-600"
-                        >
-                          キャンセル
-                        </button>
-                        <button
-                          type="button"
-                          disabled={busy}
-                          onClick={() => onConfirm(candidate.id)}
-                          className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-medium text-white"
-                        >
-                          確定する
-                        </button>
-                      </div>
-                    </div>
-                  ) : (
-                    <button
-                      type="button"
-                      disabled={busy}
-                      onClick={() => onRequestConfirm(candidate.id)}
-                      className="rounded-full bg-emerald-600 px-4 py-2 text-xs font-medium text-white hover:bg-emerald-700"
-                    >
-                      この時間で確定
-                    </button>
-                  )}
-                </div>
+                  </tbody>
+                </table>
               </div>
-            </div>
+
+              {hiddenCount > 0 && (
+                <button
+                  type="button"
+                  onClick={() => toggleDateExpanded(dateGroup.dateKey)}
+                  className="mt-2 text-xs font-medium text-blue-600 hover:text-blue-700"
+                >
+                  {showAll ? "折りたたむ" : `あと${hiddenCount}枠を表示`}
+                </button>
+              )}
+            </section>
           );
         })}
       </div>
@@ -241,13 +403,17 @@ export default function SchedulePage() {
   const [busy, setBusy] = useState(false);
   const [formMessage, setFormMessage] = useState<string | null>(null);
   const [confirmingId, setConfirmingId] = useState<string | null>(null);
+  const [deletingId, setDeletingId] = useState<string | null>(null);
+  const [confirmedCategoryFilter, setConfirmedCategoryFilter] =
+    useState<ConfirmedCategoryFilter>("all");
+  const [calendarMonth, setCalendarMonth] = useState(() => new Date());
 
   const fetchSchedule = useCallback(async () => {
-    setLoadState("loading");
+    setLoadState((current) => (current === "success" ? current : "loading"));
     setErrorMessage(null);
 
     try {
-      const response = await fetch("/api/schedule");
+      const response = await fetch("/api/schedule", { cache: "no-store" });
       if (!response.ok) {
         const body = (await response.json().catch(() => null)) as { error?: string } | null;
         throw new Error(body?.error ?? `Request failed (${response.status})`);
@@ -287,25 +453,35 @@ export default function SchedulePage() {
     return map;
   }, [data, filteredDrafts]);
 
-  const calendarDays = useMemo(() => {
-    const map = new Map<string, { drafts: ScheduleDraft[]; confirmed: ConfirmedEvent[] }>();
+  const confirmedEvents = useMemo(() => {
+    if (!data) return [];
+    return data.confirmed.map((event) => ({
+      ...event,
+      category: parseAppEventCategory(event.name),
+      displayTitle: stripAppEventPrefix(event.name),
+    }));
+  }, [data]);
 
-    for (const draft of filteredDrafts.filter((item) => item.type === "Candidate / 候補")) {
-      const key = toDateKey(draft.start);
-      const entry = map.get(key) ?? { drafts: [], confirmed: [] };
-      entry.drafts.push(draft);
-      map.set(key, entry);
+  const filteredConfirmed = useMemo(() => {
+    if (confirmedCategoryFilter === "all") return confirmedEvents;
+    return confirmedEvents.filter((event) => event.category === confirmedCategoryFilter);
+  }, [confirmedEvents, confirmedCategoryFilter]);
+
+  const confirmedByCategory = useMemo(() => {
+    const groups: Record<AppEventCategory, typeof confirmedEvents> = {
+      MTG: [],
+      Event: [],
+      Other: [],
+    };
+
+    for (const event of filteredConfirmed) {
+      if (event.category) {
+        groups[event.category].push(event);
+      }
     }
 
-    for (const event of data?.confirmed ?? []) {
-      const key = toDateKey(event.start);
-      const entry = map.get(key) ?? { drafts: [], confirmed: [] };
-      entry.confirmed.push(event);
-      map.set(key, entry);
-    }
-
-    return [...map.entries()].sort((left, right) => left[0].localeCompare(right[0]));
-  }, [filteredDrafts, data]);
+    return groups;
+  }, [filteredConfirmed]);
 
   async function handleCreateCandidate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -338,7 +514,9 @@ export default function SchedulePage() {
       setPollId(created.pollId);
       setTitle("");
       setFormMessage("候補日時を追加しました");
-      await fetchSchedule();
+      setData((prev) =>
+        prev ? patchScheduleData(prev, { drafts: sortDrafts([...prev.drafts, created]) }) : prev,
+      );
     } catch (error) {
       setFormMessage(error instanceof Error ? error.message : "Failed to add slot");
     } finally {
@@ -354,10 +532,19 @@ export default function SchedulePage() {
       (draft) => draft.person === member,
     );
 
+    const previousData = data;
     setBusy(true);
 
     try {
       if (existing) {
+        setData((prev) =>
+          prev
+            ? patchScheduleData(prev, {
+                drafts: prev.drafts.filter((draft) => draft.id !== existing.id),
+              })
+            : prev,
+        );
+
         const response = await fetch(`/api/schedule/${existing.id}?type=available`, {
           method: "DELETE",
         });
@@ -376,13 +563,84 @@ export default function SchedulePage() {
           const body = (await response.json().catch(() => null)) as { error?: string } | null;
           throw new Error(body?.error ?? "Failed to mark availability");
         }
-      }
 
-      await fetchSchedule();
+        const created = (await response.json()) as ScheduleDraft;
+        setData((prev) =>
+          prev ? patchScheduleData(prev, { drafts: sortDrafts([...prev.drafts, created]) }) : prev,
+        );
+      }
     } catch (error) {
+      setData(previousData);
       setFormMessage(error instanceof Error ? error.message : "Update failed");
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function handleDeleteCandidate(candidateId: string) {
+    if (busy) return;
+    if (!window.confirm("この候補を削除しますか？")) return;
+
+    setBusy(true);
+    setDeletingId(candidateId);
+    setFormMessage(null);
+
+    try {
+      const response = await fetch(`/api/schedule/${candidateId}`, { method: "DELETE" });
+      if (!response.ok) {
+        throw new Error("Failed to delete candidate");
+      }
+      setData((prev) =>
+        prev
+          ? patchScheduleData(prev, {
+              drafts: removeCandidateFromDrafts(prev.drafts, candidateId),
+            })
+          : prev,
+      );
+      setFormMessage("候補を削除しました");
+    } catch (error) {
+      setFormMessage(error instanceof Error ? error.message : "Delete failed");
+    } finally {
+      setBusy(false);
+      setDeletingId(null);
+      window.setTimeout(() => setFormMessage(null), 4000);
+    }
+  }
+
+  async function handleDeleteGroup(candidateIds: string[]) {
+    if (busy || candidateIds.length === 0) return;
+    if (!window.confirm("このイベントの候補をすべて削除しますか？")) return;
+
+    setBusy(true);
+    setFormMessage(null);
+
+    try {
+      const results = await Promise.all(
+        candidateIds.map((candidateId) =>
+          fetch(`/api/schedule/${candidateId}`, { method: "DELETE" }),
+        ),
+      );
+
+      if (results.some((response) => !response.ok)) {
+        throw new Error("Failed to delete group");
+      }
+
+      setData((prev) => {
+        if (!prev) return prev;
+
+        let drafts = prev.drafts;
+        for (const candidateId of candidateIds) {
+          drafts = removeCandidateFromDrafts(drafts, candidateId);
+        }
+
+        return patchScheduleData(prev, { drafts });
+      });
+      setFormMessage("候補を削除しました");
+    } catch (error) {
+      setFormMessage(error instanceof Error ? error.message : "Delete failed");
+    } finally {
+      setBusy(false);
+      window.setTimeout(() => setFormMessage(null), 4000);
     }
   }
 
@@ -404,10 +662,44 @@ export default function SchedulePage() {
         throw new Error(body?.error ?? "Confirm failed");
       }
 
+      const result = (await response.json()) as {
+        confirmedEvent: ConfirmedEvent;
+        candidate: ScheduleDraft;
+      };
+
       setPollId(null);
       setSection("confirmed");
       setFormMessage("確定しました。Calendar of availability に反映済みです。");
-      await fetchSchedule();
+      setData((prev) => {
+        if (!prev) return prev;
+
+        const groupKey = getScheduleDraftGroupKey(result.candidate);
+
+        return patchScheduleData(prev, {
+          drafts: prev.drafts.filter((draft) => {
+            if (draft.type === "Candidate / 候補") {
+              return getScheduleDraftGroupKey(draft) !== groupKey;
+            }
+
+            if (draft.type === "Available / 参加可能") {
+              const linkedCandidateId = draft.memo?.match(/candidate:([^\s]+)/)?.[1];
+              if (!linkedCandidateId) {
+                return true;
+              }
+
+              const linkedCandidate = prev.drafts.find((item) => item.id === linkedCandidateId);
+              if (!linkedCandidate) {
+                return false;
+              }
+
+              return getScheduleDraftGroupKey(linkedCandidate) !== groupKey;
+            }
+
+            return true;
+          }),
+          confirmed: sortConfirmed([...prev.confirmed, result.confirmedEvent]),
+        });
+      });
     } catch (error) {
       setFormMessage(error instanceof Error ? error.message : "Confirm failed");
     } finally {
@@ -417,7 +709,7 @@ export default function SchedulePage() {
   }
 
   const draftCount = filteredDrafts.filter((draft) => draft.type === "Candidate / 候補").length;
-  const confirmedCount = data?.confirmed.length ?? 0;
+  const confirmedCount = confirmedEvents.length;
 
   return (
     <main className="min-h-screen px-4 py-10 sm:px-6 sm:py-14">
@@ -565,35 +857,61 @@ export default function SchedulePage() {
               {value === "drafts" ? "調整中" : "確定済み"}
             </button>
           ))}
-          <span className="mx-1 w-px self-stretch bg-slate-200" />
-          {(["list", "calendar"] as const).map((value) => (
-            <button
-              key={value}
-              type="button"
-              onClick={() => setViewMode(value)}
-              className={`rounded-full px-4 py-2 text-sm ${
-                viewMode === value
-                  ? "bg-blue-600 text-white"
-                  : "border border-slate-200 bg-white text-slate-600"
-              }`}
-            >
-              {value === "list" ? "リスト" : "カレンダー"}
-            </button>
-          ))}
-          <select
-            value={categoryFilter}
-            onChange={(event) =>
-              setCategoryFilter(event.target.value as ScheduleCategory | "all")
-            }
-            className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm text-slate-600"
-          >
-            <option value="all">全カテゴリ</option>
-            {SCHEDULE_CATEGORIES.map((item) => (
-              <option key={item} value={item}>
-                {item.split(" / ")[0]}
-              </option>
-            ))}
-          </select>
+          {section === "confirmed" && (
+            <>
+              <span className="mx-1 w-px self-stretch bg-slate-200" />
+              {(["list", "calendar"] as const).map((value) => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => setViewMode(value)}
+                  className={`rounded-full px-4 py-2 text-sm ${
+                    viewMode === value
+                      ? "bg-blue-600 text-white"
+                      : "border border-slate-200 bg-white text-slate-600"
+                  }`}
+                >
+                  {value === "list" ? "一覧" : "月カレンダー"}
+                </button>
+              ))}
+              <span className="mx-1 w-px self-stretch bg-slate-200" />
+              {(["all", "MTG", "Event", "Other"] as const).map((value) => (
+                <button
+                  key={value}
+                  type="button"
+                  onClick={() => setConfirmedCategoryFilter(value)}
+                  className={`rounded-full px-4 py-2 text-sm ${
+                    confirmedCategoryFilter === value
+                      ? "bg-emerald-600 text-white"
+                      : "border border-slate-200 bg-white text-slate-600"
+                  }`}
+                >
+                  {value === "all"
+                    ? "すべて"
+                    : CONFIRMED_CATEGORY_LABELS[value as AppEventCategory]}
+                </button>
+              ))}
+            </>
+          )}
+          {section === "drafts" && (
+            <>
+              <span className="mx-1 w-px self-stretch bg-slate-200" />
+              <select
+                value={categoryFilter}
+                onChange={(event) =>
+                  setCategoryFilter(event.target.value as ScheduleCategory | "all")
+                }
+                className="rounded-full border border-slate-200 bg-white px-4 py-2 text-sm text-slate-600"
+              >
+                <option value="all">全カテゴリ</option>
+                {SCHEDULE_CATEGORIES.map((item) => (
+                  <option key={item} value={item}>
+                    {item.split(" / ")[0]}
+                  </option>
+                ))}
+              </select>
+            </>
+          )}
         </div>
 
         {loadState === "loading" ? (
@@ -603,133 +921,105 @@ export default function SchedulePage() {
             ))}
           </div>
         ) : section === "drafts" ? (
-          viewMode === "list" ? (
-            <div className="space-y-5">
-              {pollGroups.length === 0 ? (
-                <div className="rounded-xl border border-dashed border-slate-200 bg-white/60 px-6 py-10 text-center text-sm text-slate-400">
-                  調整中の候補はありません
-                </div>
-              ) : (
-                pollGroups.map((group) =>
-                  group.headline ? (
-                    <PollGroupCard
-                      key={group.groupId}
-                      headline={group.headline}
-                      candidates={group.items}
-                      availabilityByCandidate={availabilityByCandidate}
-                      busy={busy}
-                      confirmingId={confirmingId}
-                      onToggleAvailability={(candidate, member) => {
-                        void toggleAvailability(candidate, member);
-                      }}
-                      onRequestConfirm={setConfirmingId}
-                      onCancelConfirm={() => setConfirmingId(null)}
-                      onConfirm={(candidateId) => {
-                        void handleConfirm(candidateId);
-                      }}
-                    />
-                  ) : null,
-                )
-              )}
-            </div>
-          ) : (
-            <div className="space-y-4">
-              {calendarDays.length === 0 ? (
-                <div className="rounded-xl border border-dashed border-slate-200 bg-white/60 px-6 py-10 text-center text-sm text-slate-400">
-                  表示する候補がありません
-                </div>
-              ) : (
-                calendarDays.map(([day, items]) => (
-                  <div
-                    key={day}
-                    className={`rounded-2xl border border-slate-200 bg-white p-5 ${CARD_SHADOW}`}
-                  >
-                    <h3 className="text-sm font-semibold text-slate-700">
-                      {formatScheduleDateTime(day, false)}
-                    </h3>
-                    <div className="mt-4 space-y-2">
-                      {items.drafts.map((draft) => (
-                        <div
-                          key={draft.id}
-                          className="rounded-lg border border-slate-100 bg-slate-50 px-4 py-3 text-sm"
-                        >
-                          <p className="font-medium text-slate-800">{draft.title}</p>
-                          <p className="mt-1 text-xs text-slate-500">
-                            {formatScheduleDateTime(draft.start, draft.isDatetime)} · 提案{" "}
-                            {draft.person}
-                          </p>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                ))
-              )}
-            </div>
-          )
-        ) : viewMode === "list" ? (
-          <div className="space-y-3">
-            {(data?.confirmed.length ?? 0) === 0 ? (
+          <div className="space-y-5">
+            {pollGroups.length === 0 ? (
               <div className="rounded-xl border border-dashed border-slate-200 bg-white/60 px-6 py-10 text-center text-sm text-slate-400">
-                確定済みのイベントはありません
-                <p className="mt-2 text-xs text-slate-400">
-                  このページではアプリから確定した [MTG] / [Event] / [Other] のみ表示します。
-                </p>
+                調整中の候補はありません
               </div>
             ) : (
-              data?.confirmed.map((event) => (
-                <div
-                  key={event.id}
-                  className={`rounded-xl border border-slate-100 border-l-4 border-l-emerald-500 bg-white px-5 py-4 ${CARD_SHADOW}`}
-                >
-                  <div className="flex flex-wrap items-center gap-2">
-                    <span className="rounded-full border border-emerald-100 bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700">
-                      確定
-                    </span>
-                  </div>
-                  <h3 className="mt-2 text-[15px] font-semibold text-slate-800">{event.name}</h3>
-                  <p className="mt-1 text-sm text-slate-500">
-                    {formatScheduleDateTime(event.start, event.isDatetime)}
-                  </p>
-                  {event.tags.length > 0 && (
-                    <p className="mt-2 text-xs text-slate-400">{event.tags.join(" · ")}</p>
-                  )}
-                </div>
-              ))
+              pollGroups.map((group) =>
+                group.headline ? (
+                  <PollGroupCard
+                    key={group.groupId}
+                    groupId={group.groupId}
+                    displayTitle={group.displayTitle}
+                    headline={group.headline}
+                    candidates={group.items}
+                    availabilityByCandidate={availabilityByCandidate}
+                    busy={busy}
+                    confirmingId={confirmingId}
+                    deletingId={deletingId}
+                    onToggleAvailability={(candidate, member) => {
+                      void toggleAvailability(candidate, member);
+                    }}
+                    onRequestConfirm={setConfirmingId}
+                    onCancelConfirm={() => setConfirmingId(null)}
+                    onConfirm={(candidateId) => {
+                      void handleConfirm(candidateId);
+                    }}
+                    onDeleteCandidate={(candidateId) => {
+                      void handleDeleteCandidate(candidateId);
+                    }}
+                    onDeleteGroup={(candidateIds) => {
+                      void handleDeleteGroup(candidateIds);
+                    }}
+                  />
+                ) : null,
+              )
             )}
           </div>
-        ) : (
-          <div className="space-y-4">
-            {calendarDays.filter(([, items]) => items.confirmed.length > 0).length === 0 ? (
-              <div className="rounded-xl border border-dashed border-slate-200 bg-white/60 px-6 py-10 text-center text-sm text-slate-400">
-                表示する確定予定がありません
-              </div>
-            ) : (
-              calendarDays
-                .filter(([, items]) => items.confirmed.length > 0)
-                .map(([day, items]) => (
-                  <div
-                    key={day}
-                    className={`rounded-2xl border border-slate-200 bg-white p-5 ${CARD_SHADOW}`}
-                  >
-                    <h3 className="text-sm font-semibold text-slate-700">
-                      {formatScheduleDateTime(day, false)}
-                    </h3>
-                    <div className="mt-4 space-y-2">
-                      {items.confirmed.map((event) => (
-                        <div
-                          key={event.id}
-                          className="rounded-lg border border-emerald-100 bg-emerald-50/50 px-4 py-3 text-sm"
-                        >
-                          <p className="font-medium text-slate-800">{event.name}</p>
-                          <p className="mt-1 text-xs text-slate-500">
-                            {formatScheduleDateTime(event.start, event.isDatetime)}
-                          </p>
-                        </div>
-                      ))}
-                    </div>
+        ) : viewMode === "calendar" ? (
+          <MonthCalendar
+            month={calendarMonth}
+            events={filteredConfirmed}
+            onMonthChange={setCalendarMonth}
+          />
+        ) : filteredConfirmed.length === 0 ? (
+          <div className="rounded-xl border border-dashed border-slate-200 bg-white/60 px-6 py-10 text-center text-sm text-slate-400">
+            確定済みのイベントはありません
+            <p className="mt-2 text-xs text-slate-400">
+              アプリから確定した [MTG] / [Event] / [Other] のみ表示します。編集は Notion で行ってください。
+            </p>
+          </div>
+        ) : confirmedCategoryFilter === "all" ? (
+          <div className="space-y-8">
+            {(Object.keys(CONFIRMED_CATEGORY_LABELS) as AppEventCategory[]).map((cat) => {
+              const items = confirmedByCategory[cat];
+              if (items.length === 0) return null;
+
+              return (
+                <section key={cat}>
+                  <h2 className="mb-3 text-sm font-semibold text-slate-700">
+                    {CONFIRMED_CATEGORY_LABELS[cat]}
+                  </h2>
+                  <div className="space-y-3">
+                    {items.map((event) => (
+                      <div
+                        key={event.id}
+                        className={`rounded-xl border border-slate-100 border-l-4 border-l-emerald-500 bg-white px-5 py-4 ${CARD_SHADOW}`}
+                      >
+                        <h3 className="text-[15px] font-semibold text-slate-800">
+                          {event.displayTitle}
+                        </h3>
+                        <p className="mt-1 text-sm text-slate-500">
+                          {formatScheduleDateTime(event.start, event.isDatetime)}
+                        </p>
+                        {event.tags.length > 0 && (
+                          <p className="mt-2 text-xs text-slate-400">{event.tags.join(" · ")}</p>
+                        )}
+                      </div>
+                    ))}
                   </div>
-                ))
-            )}
+                </section>
+              );
+            })}
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {filteredConfirmed.map((event) => (
+              <div
+                key={event.id}
+                className={`rounded-xl border border-slate-100 border-l-4 border-l-emerald-500 bg-white px-5 py-4 ${CARD_SHADOW}`}
+              >
+                <h3 className="text-[15px] font-semibold text-slate-800">{event.displayTitle}</h3>
+                <p className="mt-1 text-sm text-slate-500">
+                  {formatScheduleDateTime(event.start, event.isDatetime)}
+                </p>
+                {event.tags.length > 0 && (
+                  <p className="mt-2 text-xs text-slate-400">{event.tags.join(" · ")}</p>
+                )}
+              </div>
+            ))}
           </div>
         )}
       </div>

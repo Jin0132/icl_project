@@ -30,6 +30,9 @@ export function parseScheduleDraft(page: PageObjectResponse): ScheduleDraft {
     person: getSelect(properties, SCHEDULE_DRAFT_PROPERTIES.person) as
       | ScheduleMember
       | null,
+    creator: getSelect(properties, SCHEDULE_DRAFT_PROPERTIES.creator) as
+      | ScheduleMember
+      | null,
     start: date.start ?? "",
     end: date.end,
     isDatetime: date.isDatetime,

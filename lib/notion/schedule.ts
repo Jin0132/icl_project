@@ -16,6 +16,7 @@ import { parseConfirmedEvent, parseScheduleDraft } from "./parse-schedule";
 import {
   CALENDAR_PROPERTIES,
   MEMBER_CALENDAR_TAGS,
+  normalizeScheduleEventTitle,
   SCHEDULE_DRAFT_PROPERTIES,
   type ConfirmedEvent,
   type ScheduleApiResponse,
@@ -24,7 +25,14 @@ import {
   type ScheduleMember,
 } from "./schedule-schema";
 
+const dataSourceIdCache = new Map<string, string>();
+
 async function resolveDataSourceId(databaseId: string): Promise<string> {
+  const cached = dataSourceIdCache.get(databaseId);
+  if (cached) {
+    return cached;
+  }
+
   const notion = getNotionClient();
   const database = await notion.databases.retrieve({ database_id: databaseId });
 
@@ -32,10 +40,19 @@ async function resolveDataSourceId(databaseId: string): Promise<string> {
     throw new Error(`No data sources found for database ${databaseId}`);
   }
 
-  return database.data_sources[0].id;
+  const dataSourceId = database.data_sources[0].id;
+  dataSourceIdCache.set(databaseId, dataSourceId);
+  return dataSourceId;
 }
 
-async function queryAllPages(dataSourceId: string): Promise<PageObjectResponse[]> {
+type NotionQueryFilter = NonNullable<
+  Parameters<ReturnType<typeof getNotionClient>["dataSources"]["query"]>[0]["filter"]
+>;
+
+async function queryAllPages(
+  dataSourceId: string,
+  filter?: NotionQueryFilter,
+): Promise<PageObjectResponse[]> {
   const notion = getNotionClient();
   const results: PageObjectResponse[] = [];
   let cursor: string | undefined;
@@ -44,6 +61,7 @@ async function queryAllPages(dataSourceId: string): Promise<PageObjectResponse[]
     const response = await notion.dataSources.query({
       data_source_id: dataSourceId,
       start_cursor: cursor,
+      ...(filter ? { filter } : {}),
     });
 
     for (const page of response.results) {
@@ -62,13 +80,80 @@ function isActiveDraft(draft: ScheduleDraft): boolean {
   return draft.status !== "Cancelled / 取消" && draft.status !== "Confirmed / 確定";
 }
 
-export async function fetchScheduleResponse(): Promise<ScheduleApiResponse> {
-  const draftDatabaseId = getScheduleDraftDatabaseId();
-  const calendarDatabaseId = getCalendarDatabaseId();
+const ACTIVE_DRAFT_STATUS_FILTER: NotionQueryFilter = {
+  and: [
+    {
+      property: SCHEDULE_DRAFT_PROPERTIES.status,
+      select: { does_not_equal: "Cancelled / 取消" },
+    },
+    {
+      property: SCHEDULE_DRAFT_PROPERTIES.status,
+      select: { does_not_equal: "Confirmed / 確定" },
+    },
+  ],
+};
 
+const APP_CONFIRMED_EVENT_FILTER: NotionQueryFilter = {
+  or: [
+    { property: CALENDAR_PROPERTIES.name, title: { contains: "[MTG]" } },
+    { property: CALENDAR_PROPERTIES.name, title: { contains: "[Event]" } },
+    { property: CALENDAR_PROPERTIES.name, title: { contains: "[Other]" } },
+  ],
+};
+
+function combineFilters(
+  base: NotionQueryFilter,
+  extra?: NotionQueryFilter,
+): NotionQueryFilter {
+  if (!extra) {
+    return base;
+  }
+
+  if ("and" in base && Array.isArray(base.and)) {
+    return { and: [...base.and, extra] } as NotionQueryFilter;
+  }
+
+  return { and: [base, extra] } as NotionQueryFilter;
+}
+
+async function queryDraftPages(filter?: NotionQueryFilter): Promise<PageObjectResponse[]> {
+  const draftDatabaseId = getScheduleDraftDatabaseId();
+  return queryAllPages(
+    await resolveDataSourceId(draftDatabaseId),
+    combineFilters(ACTIVE_DRAFT_STATUS_FILTER, filter),
+  );
+}
+
+async function queryCalendarPages(): Promise<PageObjectResponse[]> {
+  const calendarDatabaseId = getCalendarDatabaseId();
+  return queryAllPages(
+    await resolveDataSourceId(calendarDatabaseId),
+    APP_CONFIRMED_EVENT_FILTER,
+  );
+}
+
+async function getPollDrafts(pollId: string): Promise<ScheduleDraft[]> {
+  const pages = await queryDraftPages({
+    property: SCHEDULE_DRAFT_PROPERTIES.poll,
+    rich_text: { contains: pollId },
+  });
+
+  return pages.map(parseScheduleDraft).filter(isActiveDraft);
+}
+
+async function getAvailabilityForCandidateId(candidateId: string): Promise<ScheduleDraft[]> {
+  const pages = await queryDraftPages({
+    property: SCHEDULE_DRAFT_PROPERTIES.memo,
+    rich_text: { contains: `candidate:${candidateId}` },
+  });
+
+  return pages.map(parseScheduleDraft).filter(isActiveDraft);
+}
+
+export async function fetchScheduleResponse(): Promise<ScheduleApiResponse> {
   const [draftPages, calendarPages] = await Promise.all([
-    queryAllPages(await resolveDataSourceId(draftDatabaseId)),
-    queryAllPages(await resolveDataSourceId(calendarDatabaseId)),
+    queryDraftPages(),
+    queryCalendarPages(),
   ]);
 
   const drafts = draftPages
@@ -88,8 +173,8 @@ export async function fetchScheduleResponse(): Promise<ScheduleApiResponse> {
       fetchedAt: new Date().toISOString(),
       draftsCount: drafts.length,
       confirmedCount: confirmed.length,
-      draftDatabaseId,
-      calendarDatabaseId,
+      draftDatabaseId: getScheduleDraftDatabaseId(),
+      calendarDatabaseId: getCalendarDatabaseId(),
     },
   };
 }
@@ -125,6 +210,9 @@ export async function createCandidateSlot(
         select: { name: input.category },
       },
       [SCHEDULE_DRAFT_PROPERTIES.person]: {
+        select: { name: input.person },
+      },
+      [SCHEDULE_DRAFT_PROPERTIES.creator]: {
         select: { name: input.person },
       },
       [SCHEDULE_DRAFT_PROPERTIES.type]: {
@@ -178,13 +266,23 @@ export async function markAvailable(input: MarkAvailableInput): Promise<Schedule
     throw new Error("Only candidate slots can receive availability responses");
   }
 
+  const eventTitle = normalizeScheduleEventTitle(candidate.title);
+  const creator = candidate.creator ?? candidate.person;
+
   const properties: Record<string, unknown> = {
       [SCHEDULE_DRAFT_PROPERTIES.title]: {
-        title: [{ text: { content: `${candidate.title} — ${input.person}` } }],
+        title: [{ text: { content: eventTitle.slice(0, 2000) } }],
       },
       [SCHEDULE_DRAFT_PROPERTIES.person]: {
         select: { name: input.person },
       },
+      ...(creator
+        ? {
+            [SCHEDULE_DRAFT_PROPERTIES.creator]: {
+              select: { name: creator },
+            },
+          }
+        : {}),
       [SCHEDULE_DRAFT_PROPERTIES.type]: {
         select: { name: "Available / 参加可能" },
       },
@@ -243,9 +341,16 @@ export async function confirmCandidate(candidateId: string): Promise<{
     throw new Error("Only candidate slots can be confirmed");
   }
 
-  const response = await fetchScheduleResponse();
-  const pollDrafts = response.drafts.filter((draft) => draft.pollId === candidate.pollId);
-  const availablePeople = pollDrafts
+  if (!candidate.pollId) {
+    throw new Error("Candidate is missing poll ID");
+  }
+
+  const pollDrafts = await getPollDrafts(candidate.pollId);
+  const groupTitle = normalizeScheduleEventTitle(candidate.title);
+  const groupDrafts = pollDrafts.filter(
+    (draft) => normalizeScheduleEventTitle(draft.title) === groupTitle,
+  );
+  const availablePeople = groupDrafts
     .filter(
       (draft) =>
         draft.type === "Available / 参加可能" &&
@@ -300,7 +405,7 @@ export async function confirmCandidate(candidateId: string): Promise<{
   });
 
   await Promise.all(
-    pollDrafts
+    groupDrafts
       .filter((draft) => draft.id !== candidate.id && isActiveDraft(draft))
       .map((draft) =>
         notion.pages.update({
@@ -333,15 +438,51 @@ export async function confirmCandidate(candidateId: string): Promise<{
 
 export async function cancelDraft(draftId: string): Promise<void> {
   const notion = getNotionClient();
+  const page = await notion.pages.retrieve({ page_id: draftId });
 
-  await notion.pages.update({
-    page_id: draftId,
-    properties: {
-      [SCHEDULE_DRAFT_PROPERTIES.status]: {
-        select: { name: "Cancelled / 取消" },
-      },
-    },
-  });
+  if (!isFullPage(page)) {
+    throw new Error("Draft page is not accessible");
+  }
+
+  const draft = parseScheduleDraft(page);
+  const idsToCancel = new Set<string>([draftId]);
+
+  if (draft.type === "Candidate / 候補") {
+    for (const item of await getAvailabilityForCandidateId(draftId)) {
+      idsToCancel.add(item.id);
+    }
+  }
+
+  await Promise.all(
+    [...idsToCancel].map((id) =>
+      notion.pages.update({
+        page_id: id,
+        properties: {
+          [SCHEDULE_DRAFT_PROPERTIES.status]: {
+            select: { name: "Cancelled / 取消" },
+          },
+        },
+      }),
+    ),
+  );
+}
+
+export async function cancelPoll(pollId: string): Promise<void> {
+  const notion = getNotionClient();
+  const drafts = await getPollDrafts(pollId);
+
+  await Promise.all(
+    drafts.map((draft) =>
+      notion.pages.update({
+        page_id: draft.id,
+        properties: {
+          [SCHEDULE_DRAFT_PROPERTIES.status]: {
+            select: { name: "Cancelled / 取消" },
+          },
+        },
+      }),
+    ),
+  );
 }
 
 export async function removeAvailability(draftId: string): Promise<void> {
