@@ -2,7 +2,7 @@ import Link from "next/link";
 import { serializeHubConfirmedEvents } from "@/lib/hub-confirmed-events";
 import { fetchScheduleResponse } from "@/lib/notion/schedule";
 import { enJa } from "@/lib/ui/bilingual";
-import { HubConfirmedCalendar } from "./HubConfirmedCalendar";
+import { HubCalendar } from "./HubCalendar";
 
 export const dynamic = "force-dynamic";
 
@@ -132,7 +132,7 @@ export default async function HubPage() {
           </div>
         </header>
 
-        <HubConfirmedCalendar events={confirmedEvents} />
+        <HubCalendar initialConfirmed={confirmedEvents} />
 
         <div className="grid gap-4 sm:grid-cols-2">
           {DESTINATIONS.map((destination) => (

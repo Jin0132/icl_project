@@ -20,6 +20,14 @@ import {
   isSlotAvailabilityDraft,
 } from "./schedule-rsvp";
 import {
+  buildHubFreeMemo,
+  buildHubSlotKey,
+  HUB_FREE_MEMO_PREFIX,
+  parseHubFreeMemo,
+  serializeHubFreeFromDraft,
+  slotEndFromStart,
+} from "@/lib/hub-availability";
+import {
   APP_CONFIRMED_CALENDAR_TAG,
   CALENDAR_PROPERTIES,
   MEMBER_CALENDAR_TAGS,
@@ -31,6 +39,7 @@ import {
   type ScheduleCategory,
   type ScheduleDraft,
   type ScheduleMember,
+  type HubFreeSlot,
 } from "./schedule-schema";
 
 const dataSourceIdCache = new Map<string, string>();
@@ -149,6 +158,25 @@ async function getPollDrafts(pollId: string): Promise<ScheduleDraft[]> {
   return pages.map(parseScheduleDraft).filter(isActiveDraft);
 }
 
+function isHubFreeDraft(draft: ScheduleDraft): boolean {
+  return draft.memo?.startsWith(HUB_FREE_MEMO_PREFIX) ?? false;
+}
+
+async function getHubFreeDrafts(collectionId?: string): Promise<ScheduleDraft[]> {
+  const pages = await queryDraftPages({
+    property: SCHEDULE_DRAFT_PROPERTIES.memo,
+    rich_text: { contains: HUB_FREE_MEMO_PREFIX },
+  });
+
+  const drafts = pages.map(parseScheduleDraft).filter(isActiveDraft);
+
+  if (!collectionId) {
+    return drafts;
+  }
+
+  return drafts.filter((draft) => parseHubFreeMemo(draft.memo)?.collectionId === collectionId);
+}
+
 async function getAvailabilityForCandidateId(candidateId: string): Promise<ScheduleDraft[]> {
   const pages = await queryDraftPages({
     property: SCHEDULE_DRAFT_PROPERTIES.memo,
@@ -164,10 +192,17 @@ export async function fetchScheduleResponse(): Promise<ScheduleApiResponse> {
     queryCalendarPages(),
   ]);
 
-  const drafts = draftPages
+  const allDrafts = draftPages
     .map(parseScheduleDraft)
     .filter(isActiveDraft)
     .sort((left, right) => left.start.localeCompare(right.start));
+
+  const hubFree = allDrafts
+    .filter(isHubFreeDraft)
+    .map(serializeHubFreeFromDraft)
+    .filter((slot): slot is HubFreeSlot => slot !== null);
+
+  const drafts = allDrafts.filter((draft) => !isHubFreeDraft(draft));
 
   const confirmed = calendarPages
     .map(parseConfirmedEvent)
@@ -177,10 +212,12 @@ export async function fetchScheduleResponse(): Promise<ScheduleApiResponse> {
   return {
     drafts,
     confirmed,
+    hubFree,
     meta: {
       fetchedAt: new Date().toISOString(),
       draftsCount: drafts.length,
       confirmedCount: confirmed.length,
+      hubFreeCount: hubFree.length,
       draftDatabaseId: getScheduleDraftDatabaseId(),
       calendarDatabaseId: getCalendarDatabaseId(),
     },
@@ -606,6 +643,10 @@ export async function cancelDraft(draftId: string): Promise<void> {
 }
 
 export async function cancelPoll(pollId: string): Promise<void> {
+  if (pollId.startsWith("hub:")) {
+    throw new Error("Cannot cancel hub availability collection via poll API");
+  }
+
   const notion = getNotionClient();
   const drafts = await getPollDrafts(pollId);
 
@@ -625,4 +666,69 @@ export async function cancelPoll(pollId: string): Promise<void> {
 
 export async function removeAvailability(draftId: string): Promise<void> {
   await cancelDraft(draftId);
+}
+
+type ToggleHubFreeInput = {
+  person: ScheduleMember;
+  start: string;
+  collectionId: string;
+};
+
+export async function toggleHubFreeSlot(
+  input: ToggleHubFreeInput,
+): Promise<{ action: "created" | "removed"; slot: HubFreeSlot | null }> {
+  const notion = getNotionClient();
+  const slotKey = buildHubSlotKey(input.start);
+  const end = slotEndFromStart(input.start);
+  const memo = buildHubFreeMemo(input.collectionId, slotKey);
+
+  const existingPages = await getHubFreeDrafts(input.collectionId);
+  const existing = existingPages.find(
+    (draft) =>
+      draft.person === input.person &&
+      parseHubFreeMemo(draft.memo)?.slotKey === slotKey,
+  );
+
+  if (existing) {
+    await cancelDraft(existing.id);
+    return { action: "removed", slot: null };
+  }
+
+  const page = await notion.pages.create({
+    parent: { database_id: getScheduleDraftDatabaseId() },
+    properties: {
+      [SCHEDULE_DRAFT_PROPERTIES.title]: {
+        title: [{ text: { content: "Hub availability / 広域空き" } }],
+      },
+      [SCHEDULE_DRAFT_PROPERTIES.person]: {
+        select: { name: input.person },
+      },
+      [SCHEDULE_DRAFT_PROPERTIES.type]: {
+        select: { name: "Available / 参加可能" },
+      },
+      [SCHEDULE_DRAFT_PROPERTIES.status]: {
+        select: { name: "Open / 調整中" },
+      },
+      [SCHEDULE_DRAFT_PROPERTIES.poll]: {
+        rich_text: [{ text: { content: input.collectionId } }],
+      },
+      [SCHEDULE_DRAFT_PROPERTIES.memo]: {
+        rich_text: [{ text: { content: memo } }],
+      },
+      ...buildNotionDateProperty(input.start, end, true, SCHEDULE_DRAFT_PROPERTIES.date),
+    },
+  });
+
+  if (!isFullPage(page)) {
+    throw new Error("Created hub free page is not accessible");
+  }
+
+  const draft = parseScheduleDraft(page);
+  const slot = serializeHubFreeFromDraft(draft);
+
+  if (!slot) {
+    throw new Error("Failed to parse created hub free slot");
+  }
+
+  return { action: "created", slot };
 }

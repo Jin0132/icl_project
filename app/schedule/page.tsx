@@ -12,9 +12,7 @@ import {
   type AppEventCategory,
 } from "@/lib/notion/notion-datetime";
 import { MonthCalendar } from "./MonthCalendar";
-import { WideAreaCalendar } from "./WideAreaCalendar";
-import { WideAreaMockDemo } from "./WideAreaMockDemo";
-import { CARD_SHADOW, CATEGORY_STYLES, type CoordinationMode } from "./schedule-ui";
+import { CARD_SHADOW, CATEGORY_STYLES } from "./schedule-ui";
 import type {
   ConfirmedEvent,
   ScheduleApiResponse,
@@ -126,11 +124,13 @@ function patchScheduleData(
     ...prev,
     drafts,
     confirmed,
+    hubFree: prev.hubFree,
     meta: {
       ...prev.meta,
       fetchedAt: new Date().toISOString(),
       draftsCount: drafts.length,
       confirmedCount: confirmed.length,
+      hubFreeCount: prev.hubFree.length,
     },
   };
 }
@@ -242,7 +242,6 @@ function PollGroupCard({
   candidates,
   groupDrafts,
   availabilityByCandidate,
-  coordinationMode,
   busy,
   confirmingId,
   deletingId,
@@ -262,7 +261,6 @@ function PollGroupCard({
   candidates: ScheduleDraft[];
   groupDrafts: ScheduleDraft[];
   availabilityByCandidate: Map<string, ScheduleDraft[]>;
-  coordinationMode: CoordinationMode;
   busy: boolean;
   confirmingId: string | null;
   deletingId: string | null;
@@ -371,20 +369,6 @@ function PollGroupCard({
         </div>
       </div>
 
-      {coordinationMode === "wide" ? (
-        <WideAreaCalendar
-          candidates={candidates}
-          groupDrafts={groupDrafts}
-          groupKey={groupKey}
-          availabilityByCandidate={availabilityByCandidate}
-          busy={busy}
-          confirmingId={confirmingId}
-          onToggleAvailability={onToggleAvailability}
-          onRequestConfirm={onRequestConfirm}
-          onCancelConfirm={onCancelConfirm}
-          onConfirm={onConfirm}
-        />
-      ) : (
       <div className="divide-y divide-slate-100">
         {dateGroups.map((dateGroup) => {
           const showAll = expandedDates.has(dateGroup.dateKey);
@@ -524,7 +508,6 @@ function PollGroupCard({
           );
         })}
       </div>
-      )}
     </div>
   );
 }
@@ -549,7 +532,6 @@ export default function SchedulePage() {
   const [confirmedCategoryFilter, setConfirmedCategoryFilter] =
     useState<ConfirmedCategoryFilter>("all");
   const [calendarMonth, setCalendarMonth] = useState(() => new Date());
-  const [coordinationMode, setCoordinationMode] = useState<CoordinationMode>("finalize");
 
   const fetchSchedule = useCallback(async () => {
     setLoadState((current) => (current === "success" ? current : "loading"));
@@ -995,11 +977,16 @@ export default function SchedulePage() {
               {enJa("Team Schedule", "予定調整")}
             </h1>
             <p className="mt-2 max-w-xl text-sm text-slate-600">
-              Drafts sync to Schedule Drafts; confirmed events go to Calendar of availability. All
-              times are JST.
+              {enJa(
+                "Phase 3: final RSVP and confirm. Mark team-wide free time on the Hub first.",
+                "Phase 3：最終出欠と確定。広域の空き入力は Hub で行います。",
+              )}
             </p>
             <p className="mt-1 max-w-xl text-xs text-slate-400">
-              調整中は Schedule Drafts、確定後は Calendar of availability に反映されます。表示はすべて日本時間（JST）です。
+              {enJa(
+                "Open polls sync to Schedule Drafts; confirmed events go to Calendar of availability. JST.",
+                "調整中は Schedule Drafts、確定後は Calendar of availability。表示はすべて日本時間（JST）です。",
+              )}
             </p>
           </div>
           <Link
@@ -1170,23 +1157,6 @@ export default function SchedulePage() {
           {section === "drafts" && (
             <>
               <span className="mx-1 w-px self-stretch bg-slate-200" />
-              {(["finalize", "wide"] as const).map((value) => (
-                <button
-                  key={value}
-                  type="button"
-                  onClick={() => setCoordinationMode(value)}
-                  className={`rounded-full px-4 py-2 text-sm ${
-                    coordinationMode === value
-                      ? "bg-blue-600 text-white"
-                      : "border border-slate-200 bg-white text-slate-600"
-                  }`}
-                >
-                  {value === "finalize"
-                    ? enJa("Finalize", "最終確定")
-                    : enJa("Wide poll", "広域調整")}
-                </button>
-              ))}
-              <span className="mx-1 w-px self-stretch bg-slate-200" />
               <select
                 value={categoryFilter}
                 onChange={(event) =>
@@ -1214,13 +1184,21 @@ export default function SchedulePage() {
         ) : section === "drafts" ? (
           <div className="space-y-5">
             {pollGroups.length === 0 ? (
-              coordinationMode === "wide" ? (
-                <WideAreaMockDemo />
-              ) : (
               <div className="rounded-xl border border-dashed border-slate-200 bg-white/60 px-6 py-10 text-center text-sm text-slate-400">
-                {enJa("No open polls", "調整中の候補はありません")}
+                <p>{enJa("No open polls", "調整中の候補はありません")}</p>
+                <p className="mt-2 text-xs">
+                  {enJa(
+                    "Mark team availability on the Hub, then create candidates here.",
+                    "Hub でチームの空きを入力してから、ここで候補日を追加してください。",
+                  )}
+                </p>
+                <Link
+                  href="/"
+                  className="mt-3 inline-block text-sm font-medium text-blue-600 hover:text-blue-700"
+                >
+                  {enJa("Go to Hub calendar", "Hub カレンダーへ")} →
+                </Link>
               </div>
-              )
             ) : (
               pollGroups.map((group) => {
                 const groupDrafts = data
@@ -1237,7 +1215,6 @@ export default function SchedulePage() {
                     candidates={group.items}
                     groupDrafts={groupDrafts}
                     availabilityByCandidate={availabilityByCandidate}
-                    coordinationMode={coordinationMode}
                     busy={busy}
                     confirmingId={confirmingId}
                     deletingId={deletingId}

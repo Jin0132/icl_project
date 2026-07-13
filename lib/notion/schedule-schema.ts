@@ -71,13 +71,25 @@ export interface ConfirmedEvent {
   lastEditedTime: string;
 }
 
+export interface HubFreeSlot {
+  id: string;
+  person: ScheduleMember;
+  start: string;
+  end: string;
+  collectionId: string;
+  slotKey: string;
+  dateKey: string;
+}
+
 export interface ScheduleApiResponse {
   drafts: ScheduleDraft[];
   confirmed: ConfirmedEvent[];
+  hubFree: HubFreeSlot[];
   meta: {
     fetchedAt: string;
     draftsCount: number;
     confirmedCount: number;
+    hubFreeCount: number;
     draftDatabaseId: string;
     calendarDatabaseId: string;
   };

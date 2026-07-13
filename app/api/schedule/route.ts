@@ -4,6 +4,7 @@ import {
   fetchScheduleResponse,
   markAvailable,
   markEventDecline,
+  toggleHubFreeSlot,
 } from "@/lib/notion/schedule";
 import {
   SCHEDULE_CATEGORIES,
@@ -15,7 +16,7 @@ import {
 } from "@/lib/notion/schedule-schema";
 
 type CreateScheduleBody = {
-  action?: "candidate" | "available" | "decline";
+  action?: "candidate" | "available" | "decline" | "hub-free";
   title?: string;
   category?: ScheduleCategory;
   person?: ScheduleMember;
@@ -24,6 +25,7 @@ type CreateScheduleBody = {
   pollId?: string;
   memo?: string;
   candidateId?: string;
+  collectionId?: string;
 };
 
 function isScheduleCategory(value: string): value is ScheduleCategory {
@@ -52,7 +54,13 @@ export async function GET(): Promise<
 
 export async function POST(
   request: Request,
-): Promise<NextResponse<ScheduleDraft | { error: string }>> {
+): Promise<
+  NextResponse<
+    | ScheduleDraft
+    | { action: "created" | "removed"; slot: import("@/lib/notion/schedule-schema").HubFreeSlot | null }
+    | { error: string }
+  >
+> {
   try {
     const body = (await request.json()) as CreateScheduleBody;
     const action = body.action ?? "candidate";
@@ -87,6 +95,26 @@ export async function POST(
       });
 
       return NextResponse.json(draft, { status: 201 });
+    }
+
+    if (action === "hub-free") {
+      const start = body.start?.trim();
+      const collectionId = body.collectionId?.trim();
+
+      if (!start || !collectionId || !body.person || !isScheduleMember(body.person)) {
+        return NextResponse.json(
+          { error: "start, collectionId, and person are required" },
+          { status: 400 },
+        );
+      }
+
+      const result = await toggleHubFreeSlot({
+        person: body.person,
+        start,
+        collectionId,
+      });
+
+      return NextResponse.json(result, { status: result.action === "created" ? 201 : 200 });
     }
 
     const title = body.title?.trim();

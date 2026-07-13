@@ -15,5 +15,3 @@ export const CATEGORY_STYLES: Record<string, { border: string; pill: string }> =
     pill: "bg-slate-50 text-slate-700 border-slate-200",
   },
 };
-
-export type CoordinationMode = "finalize" | "wide";
