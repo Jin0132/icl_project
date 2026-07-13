@@ -20,6 +20,7 @@ import {
   isSlotAvailabilityDraft,
 } from "./schedule-rsvp";
 import {
+  APP_CONFIRMED_CALENDAR_TAG,
   CALENDAR_PROPERTIES,
   MEMBER_CALENDAR_TAGS,
   getScheduleDraftGroupKey,
@@ -170,7 +171,7 @@ export async function fetchScheduleResponse(): Promise<ScheduleApiResponse> {
 
   const confirmed = calendarPages
     .map(parseConfirmedEvent)
-    .filter((event) => isAppConfirmedEvent(event.name))
+    .filter((event) => isAppConfirmedEvent(event.name, event.tags))
     .sort((left, right) => left.start.localeCompare(right.start));
 
   return {
@@ -512,9 +513,12 @@ export async function confirmCandidate(candidateId: string): Promise<{
         title: [{ text: { content: eventName.slice(0, 2000) } }],
       },
       [CALENDAR_PROPERTIES.tags]: {
-        multi_select: participants.map((person) => ({
-          name: MEMBER_CALENDAR_TAGS[person],
-        })),
+        multi_select: [
+          { name: APP_CONFIRMED_CALENDAR_TAG },
+          ...participants.map((person) => ({
+            name: MEMBER_CALENDAR_TAGS[person],
+          })),
+        ],
       },
       ...buildNotionDateProperty(
         candidate.start,

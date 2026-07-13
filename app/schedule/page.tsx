@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { FormEvent, useCallback, useEffect, useMemo, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState, type MouseEvent } from "react";
 import {
   formatScheduleDateLabel,
   formatScheduleDateTime,
@@ -20,6 +20,7 @@ import type {
   ScheduleMember,
 } from "@/lib/notion/schedule-schema";
 import {
+  APP_CONFIRMED_CALENDAR_TAG,
   SCHEDULE_CATEGORIES,
   SCHEDULE_MEMBERS,
   getScheduleDraftGroupKey,
@@ -28,7 +29,7 @@ import {
 import { enJa } from "@/lib/ui/bilingual";
 import {
   getDeclineGroupKey,
-  getMemberRsvpInGroup,
+  getMemberSlotRsvpStatus,
   getPendingMembers,
   getGroupDraftsForCandidates,
   isDeclineDraft,
@@ -291,17 +292,41 @@ function PollGroupCard({
     CATEGORY_STYLES[headline.category ?? ""] ?? CATEGORY_STYLES["Other / その他"];
   const dateGroups = useMemo(() => groupCandidatesByDate(candidates), [candidates]);
   const [expandedDates, setExpandedDates] = useState<Set<string>>(() => new Set());
-  const referenceCandidate = candidates[0];
+  const slotClickTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  function handleMemberRsvpClick(member: ScheduleMember, status: MemberRsvpStatus) {
-    if (status === "declined") {
-      onUndoDecline(member);
+  function handleSlotMemberClick(
+    event: MouseEvent<HTMLButtonElement>,
+    candidate: ScheduleDraft,
+    member: ScheduleMember,
+    status: MemberRsvpStatus,
+  ) {
+    if (event.detail >= 2) {
+      if (slotClickTimerRef.current) {
+        clearTimeout(slotClickTimerRef.current);
+        slotClickTimerRef.current = null;
+      }
+
+      if (status !== "declined") {
+        onEventDecline(member);
+      }
+
       return;
     }
 
-    if (referenceCandidate) {
-      onEventDecline(member);
+    if (slotClickTimerRef.current) {
+      clearTimeout(slotClickTimerRef.current);
     }
+
+    slotClickTimerRef.current = setTimeout(() => {
+      slotClickTimerRef.current = null;
+
+      if (status === "declined") {
+        onUndoDecline(member);
+        return;
+      }
+
+      onToggleAvailability(candidate, member);
+    }, 250);
   }
 
   function toggleDateExpanded(dateKey: string) {
@@ -356,24 +381,6 @@ function PollGroupCard({
             </button>
           </div>
         </div>
-
-        <div className="mt-4 flex flex-wrap gap-2 border-t border-slate-100 pt-4">
-          {SCHEDULE_MEMBERS.map((member) => {
-            const status = getMemberRsvpInGroup(groupDrafts, candidates, groupKey, member);
-
-            return (
-              <button
-                key={member}
-                type="button"
-                disabled={busy || !referenceCandidate}
-                onClick={() => handleMemberRsvpClick(member, status)}
-                className={`rounded-full border px-3 py-1.5 text-xs font-medium transition-colors disabled:opacity-60 ${RSVP_STATUS_STYLES[status]}`}
-              >
-                {member}
-              </button>
-            );
-          })}
-        </div>
       </div>
 
       <div className="divide-y divide-slate-100">
@@ -422,28 +429,28 @@ function PollGroupCard({
                           <td className="px-3 py-3">
                             <div className="flex flex-wrap gap-1.5">
                               {SCHEDULE_MEMBERS.map((member) => {
-                                const active = availability.some((item) => item.person === member);
+                                const status = getMemberSlotRsvpStatus(
+                                  groupDrafts,
+                                  groupKey,
+                                  member,
+                                  availability,
+                                );
+
                                 return (
                                   <button
                                     key={member}
                                     type="button"
                                     disabled={busy}
-                                    onClick={() => onToggleAvailability(candidate, member)}
-                                    className={`rounded-full px-2.5 py-1 text-xs font-medium ${
-                                      active
-                                        ? "bg-emerald-600 text-white"
-                                        : "border border-slate-200 bg-white text-slate-600"
-                                    }`}
+                                    onClick={(event) =>
+                                      handleSlotMemberClick(event, candidate, member, status)
+                                    }
+                                    className={`rounded-full border px-2.5 py-1 text-xs font-medium transition-colors disabled:opacity-60 ${RSVP_STATUS_STYLES[status]}`}
                                   >
                                     {member}
                                   </button>
                                 );
                               })}
                             </div>
-                            <p className="mt-1 text-[11px] text-slate-400">
-                              {availability.map((item) => item.person).filter(Boolean).join("、") ||
-                                enJa("No response", "未回答")}
-                            </p>
                           </td>
                           <td className="px-3 py-3 text-right whitespace-nowrap">
                             {isConfirming ? (
@@ -1280,8 +1287,12 @@ export default function SchedulePage() {
                         <p className="mt-1 text-sm text-slate-500">
                           {formatScheduleDateTime(event.start, event.isDatetime)}
                         </p>
-                        {event.tags.length > 0 && (
-                          <p className="mt-2 text-xs text-slate-400">{event.tags.join(" · ")}</p>
+                        {event.tags.filter((tag) => tag !== APP_CONFIRMED_CALENDAR_TAG).length > 0 && (
+                          <p className="mt-2 text-xs text-slate-400">
+                            {event.tags
+                              .filter((tag) => tag !== APP_CONFIRMED_CALENDAR_TAG)
+                              .join(" · ")}
+                          </p>
                         )}
                       </div>
                     ))}
@@ -1301,8 +1312,12 @@ export default function SchedulePage() {
                 <p className="mt-1 text-sm text-slate-500">
                   {formatScheduleDateTime(event.start, event.isDatetime)}
                 </p>
-                {event.tags.length > 0 && (
-                  <p className="mt-2 text-xs text-slate-400">{event.tags.join(" · ")}</p>
+                {event.tags.filter((tag) => tag !== APP_CONFIRMED_CALENDAR_TAG).length > 0 && (
+                  <p className="mt-2 text-xs text-slate-400">
+                    {event.tags
+                      .filter((tag) => tag !== APP_CONFIRMED_CALENDAR_TAG)
+                      .join(" · ")}
+                  </p>
                 )}
               </div>
             ))}

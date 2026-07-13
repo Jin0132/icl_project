@@ -89,6 +89,9 @@ export const MEMBER_CALENDAR_TAGS: Record<ScheduleMember, string> = {
   Makiko: "🔵MAKIKO",
 };
 
+/** アプリの「確定」ボタン経由で作成されたカレンダー行のみに付与 */
+export const APP_CONFIRMED_CALENDAR_TAG = "ICL-App";
+
 const MEMBER_NAME_PATTERN = SCHEDULE_MEMBERS.join("|");
 
 /** タイトル末尾の「— 作成者名」を除去（旧データ互換） */

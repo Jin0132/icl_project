@@ -181,9 +181,12 @@ export function getScheduleDateKey(value: string, isDatetime: boolean): string {
 
 export type AppEventCategory = "MTG" | "Event" | "Other";
 
-/** アプリから確定したイベントのみ（[MTG] / [Event] / [Other] プレフィックス） */
-export function isAppConfirmedEvent(name: string): boolean {
-  return /^\[(MTG|Event|Other)\]\s/.test(name);
+/** アプリから確定したイベントのみ（[MTG] / [Event] / [Other] プレフィックス + ICL-App タグ） */
+export function isAppConfirmedEvent(name: string, tags: string[] = []): boolean {
+  return (
+    /^\[(MTG|Event|Other)\]\s/.test(name) &&
+    tags.includes("ICL-App")
+  );
 }
 
 export function parseAppEventCategory(name: string): AppEventCategory | null {

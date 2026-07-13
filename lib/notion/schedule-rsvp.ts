@@ -66,6 +66,30 @@ export function getMemberRsvpInGroup(
   return hasSlot ? "available" : "pending";
 }
 
+export function getMemberSlotRsvpStatus(
+  groupDrafts: ScheduleDraft[],
+  groupKey: string,
+  member: ScheduleMember,
+  availability: ScheduleDraft[],
+): MemberRsvpStatus {
+  if (
+    groupDrafts.some(
+      (draft) =>
+        isDeclineDraft(draft) &&
+        draft.person === member &&
+        getDeclineGroupKey(draft) === groupKey,
+    )
+  ) {
+    return "declined";
+  }
+
+  if (availability.some((draft) => draft.person === member)) {
+    return "available";
+  }
+
+  return "pending";
+}
+
 export function getPendingMembers(
   drafts: ScheduleDraft[],
   candidates: ScheduleDraft[],
