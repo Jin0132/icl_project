@@ -213,9 +213,9 @@ function groupCandidatesByDate(candidates: ScheduleDraft[]) {
 const SLOTS_COLLAPSED_LIMIT = 6;
 
 const RSVP_STATUS_STYLES: Record<MemberRsvpStatus, string> = {
-  pending: "border-slate-200 bg-white text-slate-600",
-  available: "border-emerald-200 bg-emerald-50 text-emerald-800",
-  declined: "border-red-200 bg-red-50 text-red-700",
+  pending: "border-slate-300 bg-slate-100 text-slate-600 hover:bg-slate-200",
+  available: "border-emerald-400 bg-emerald-500 text-white hover:bg-emerald-600",
+  declined: "border-red-400 bg-red-500 text-white hover:bg-red-600",
 };
 
 function buildRsvpReminderText({
@@ -291,11 +291,18 @@ function PollGroupCard({
     CATEGORY_STYLES[headline.category ?? ""] ?? CATEGORY_STYLES["Other / その他"];
   const dateGroups = useMemo(() => groupCandidatesByDate(candidates), [candidates]);
   const [expandedDates, setExpandedDates] = useState<Set<string>>(() => new Set());
-  const pendingMembers = useMemo(
-    () => getPendingMembers(groupDrafts, candidates, groupKey),
-    [groupDrafts, candidates, groupKey],
-  );
   const referenceCandidate = candidates[0];
+
+  function handleMemberRsvpClick(member: ScheduleMember, status: MemberRsvpStatus) {
+    if (status === "declined") {
+      onUndoDecline(member);
+      return;
+    }
+
+    if (referenceCandidate) {
+      onEventDecline(member);
+    }
+  }
 
   function toggleDateExpanded(dateKey: string) {
     setExpandedDates((current) => {
@@ -350,70 +357,22 @@ function PollGroupCard({
           </div>
         </div>
 
-        <div className="mt-4 border-t border-slate-100 pt-4">
-          <p className="text-xs font-medium text-slate-500">{enJa("Quick RSVP", "クイック出欠")}</p>
-          <p className="mt-1 text-[11px] text-slate-400">
-            {enJa(
-              "Mark time slots below, or set Can't attend for the whole event.",
-              "下の表で参加可能な時間を選ぶか、イベント全体を参加不可にできます。",
-            )}
-          </p>
-          <div className="mt-3 flex flex-wrap gap-2">
-            {SCHEDULE_MEMBERS.map((member) => {
-              const status = getMemberRsvpInGroup(groupDrafts, candidates, groupKey, member);
-              const declineDraft = groupDrafts.find(
-                (draft) =>
-                  isDeclineDraft(draft) &&
-                  draft.person === member &&
-                  getDeclineGroupKey(draft) === groupKey,
-              );
+        <div className="mt-4 flex flex-wrap gap-2 border-t border-slate-100 pt-4">
+          {SCHEDULE_MEMBERS.map((member) => {
+            const status = getMemberRsvpInGroup(groupDrafts, candidates, groupKey, member);
 
-              return (
-                <div
-                  key={member}
-                  className="flex flex-wrap items-center gap-1.5 rounded-xl border border-slate-100 bg-slate-50/80 px-2 py-1.5"
-                >
-                  <span
-                    className={`rounded-full border px-2.5 py-1 text-xs font-medium ${RSVP_STATUS_STYLES[status]}`}
-                  >
-                    {member}
-                    <span className="ml-1 opacity-70">
-                      {status === "pending"
-                        ? "?"
-                        : status === "available"
-                          ? "✓"
-                          : "✗"}
-                    </span>
-                  </span>
-                  {status !== "declined" && referenceCandidate && (
-                    <button
-                      type="button"
-                      disabled={busy}
-                      onClick={() => onEventDecline(member)}
-                      className="rounded-lg border border-red-200 bg-white px-2 py-1 text-[11px] text-red-700 hover:bg-red-50 disabled:opacity-60"
-                    >
-                      {enJa("Can't attend", "参加不可")}
-                    </button>
-                  )}
-                  {status === "declined" && declineDraft && (
-                    <button
-                      type="button"
-                      disabled={busy}
-                      onClick={() => onUndoDecline(member)}
-                      className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-[11px] text-slate-600 hover:bg-slate-50 disabled:opacity-60"
-                    >
-                      {enJa("Undo", "取り消し")}
-                    </button>
-                  )}
-                </div>
-              );
-            })}
-          </div>
-          {pendingMembers.length > 0 && (
-            <p className="mt-2 text-[11px] text-amber-700">
-              {enJa("Awaiting response", "未回答")}: {pendingMembers.join(", ")}
-            </p>
-          )}
+            return (
+              <button
+                key={member}
+                type="button"
+                disabled={busy || !referenceCandidate}
+                onClick={() => handleMemberRsvpClick(member, status)}
+                className={`rounded-full border px-3 py-1.5 text-xs font-medium transition-colors disabled:opacity-60 ${RSVP_STATUS_STYLES[status]}`}
+              >
+                {member}
+              </button>
+            );
+          })}
         </div>
       </div>
 
