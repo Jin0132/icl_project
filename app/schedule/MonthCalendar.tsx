@@ -1,5 +1,8 @@
-import type { AppEventCategory } from "@/lib/notion/notion-datetime";
-import type { ConfirmedEvent } from "@/lib/notion/schedule-schema";
+import {
+  formatScheduleDateTime,
+  type AppEventCategory,
+} from "@/lib/notion/notion-datetime";
+import { APP_CONFIRMED_CALENDAR_TAG, type ConfirmedEvent } from "@/lib/notion/schedule-schema";
 import { enJa } from "@/lib/ui/bilingual";
 
 const WEEKDAYS = ["日", "月", "火", "水", "木", "金", "土"] as const;
@@ -8,6 +11,12 @@ const CATEGORY_DOT: Record<AppEventCategory, string> = {
   MTG: "bg-blue-500",
   Event: "bg-orange-500",
   Other: "bg-slate-400",
+};
+
+const CATEGORY_LABEL: Record<AppEventCategory, string> = {
+  MTG: enJa("MTG", "会議"),
+  Event: enJa("Event", "イベント"),
+  Other: enJa("Other", "その他"),
 };
 
 function toJapanDateKey(value: string): string {
@@ -49,13 +58,54 @@ function buildMonthGrid(month: Date) {
   });
 }
 
+function participantTags(tags: string[]): string[] {
+  return tags.filter((tag) => tag !== APP_CONFIRMED_CALENDAR_TAG);
+}
+
+function EventChip({
+  event,
+}: {
+  event: ConfirmedEvent & { category: AppEventCategory | null; displayTitle?: string };
+}) {
+  const displayTitle =
+    event.displayTitle ?? event.name.replace(/^\[(MTG|Event|Other)\]\s/, "");
+  const category = event.category ?? "Other";
+  const participants = participantTags(event.tags);
+  const timeLabel = formatScheduleDateTime(event.start, event.isDatetime);
+
+  return (
+    <div className="group/event relative">
+      <div className="cursor-default truncate rounded px-1 py-0.5 text-[10px] leading-tight text-slate-700 transition-colors group-hover/event:bg-white group-hover/event:shadow-sm">
+        <span
+          className={`mr-1 inline-block h-1.5 w-1.5 rounded-full ${CATEGORY_DOT[category]}`}
+        />
+        {displayTitle}
+      </div>
+
+      <div
+        className="pointer-events-none absolute left-0 top-full z-30 mt-1 w-48 -translate-y-0.5 scale-95 rounded-xl border border-slate-200 bg-white p-2.5 opacity-0 shadow-[0_8px_24px_rgba(0,0,0,0.12)] transition-all duration-150 group-hover/event:translate-y-0 group-hover/event:scale-100 group-hover/event:opacity-100"
+        role="tooltip"
+      >
+        <p className="text-xs font-semibold text-slate-800">{displayTitle}</p>
+        <p className="mt-1 text-[10px] text-slate-500">{timeLabel}</p>
+        <p className="mt-1 text-[10px] text-slate-500">{CATEGORY_LABEL[category]}</p>
+        {participants.length > 0 && (
+          <p className="mt-1.5 border-t border-slate-100 pt-1.5 text-[10px] leading-relaxed text-slate-600">
+            {participants.join(" · ")}
+          </p>
+        )}
+      </div>
+    </div>
+  );
+}
+
 export function MonthCalendar({
   month,
   events,
   onMonthChange,
 }: {
   month: Date;
-  events: Array<ConfirmedEvent & { category: AppEventCategory | null }>;
+  events: Array<ConfirmedEvent & { category: AppEventCategory | null; displayTitle?: string }>;
   onMonthChange: (next: Date) => void;
 }) {
   const cells = buildMonthGrid(month);
@@ -102,7 +152,7 @@ export function MonthCalendar({
         ))}
       </div>
 
-      <div className="mt-1 grid grid-cols-7 gap-1">
+      <div className="mt-1 grid grid-cols-7 gap-1 overflow-visible">
         {cells.map((cell, index) => {
           if (!cell) {
             return <div key={`empty-${index}`} className="min-h-20 rounded-lg bg-transparent" />;
@@ -113,23 +163,12 @@ export function MonthCalendar({
           return (
             <div
               key={cell.dateKey}
-              className="min-h-20 rounded-lg border border-slate-100 bg-slate-50/60 p-1.5"
+              className="min-h-20 overflow-visible rounded-lg border border-slate-100 bg-slate-50/60 p-1.5"
             >
               <p className="text-xs font-medium text-slate-600">{cell.dayNumber}</p>
               <div className="mt-1 space-y-1">
                 {dayEvents.map((event) => (
-                  <div
-                    key={event.id}
-                    className="truncate rounded px-1 py-0.5 text-[10px] leading-tight text-slate-700"
-                    title={event.name}
-                  >
-                    <span
-                      className={`mr-1 inline-block h-1.5 w-1.5 rounded-full ${
-                        CATEGORY_DOT[event.category ?? "Other"]
-                      }`}
-                    />
-                    {event.name.replace(/^\[(MTG|Event|Other)\]\s/, "")}
-                  </div>
+                  <EventChip key={event.id} event={event} />
                 ))}
               </div>
             </div>
@@ -138,7 +177,10 @@ export function MonthCalendar({
       </div>
 
       <p className="mt-3 text-xs text-slate-400">
-        {enJa("Read-only. Edit in Notion.", "閲覧専用。編集は Notion で行ってください。")}
+        {enJa(
+          "Read-only. Hover an event for details. Edit in Notion.",
+          "閲覧専用。イベントにホバーで詳細表示。編集は Notion で行ってください。",
+        )}
       </p>
     </div>
   );
