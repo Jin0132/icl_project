@@ -14,8 +14,13 @@ import {
   getSlotHeatClasses,
   type HubCalendarMode,
 } from "@/lib/hub-availability";
-import type { HubFreeSlot, ScheduleApiResponse, ScheduleMember } from "@/lib/notion/schedule-schema";
-import { SCHEDULE_MEMBERS } from "@/lib/notion/schedule-schema";
+import type {
+  HubFreeSlot,
+  ScheduleApiResponse,
+  ScheduleCategory,
+  ScheduleMember,
+} from "@/lib/notion/schedule-schema";
+import { SCHEDULE_CATEGORIES, SCHEDULE_MEMBERS } from "@/lib/notion/schedule-schema";
 import { enJa } from "@/lib/ui/bilingual";
 import { MonthCalendar } from "./schedule/MonthCalendar";
 
@@ -24,8 +29,8 @@ const WEEKDAYS = ["日", "月", "火", "水", "木", "金", "土"] as const;
 
 const MODE_LABELS: Record<HubCalendarMode, string> = {
   confirmed: enJa("Confirmed", "確定済み"),
-  input: enJa("Mark free", "空きを入力"),
-  team: enJa("Team free", "チーム空き"),
+  input: enJa("Phase 1 · Free", "Phase 1 · 空き入力"),
+  team: enJa("Phase 2 · Assign", "Phase 2 · 振り分け"),
 };
 
 function MemberPills({
@@ -228,6 +233,18 @@ function HubTeamFreeHeatmap({
   hubFree: HubFreeSlot[];
 }) {
   const [selectedDateKey, setSelectedDateKey] = useState<string | null>(null);
+  const [selectedSlotKeys, setSelectedSlotKeys] = useState<Set<string>>(() => new Set());
+  const [title, setTitle] = useState("");
+  const [category, setCategory] = useState<ScheduleCategory>("MTG / 定例MTG");
+  const [person, setPerson] = useState<ScheduleMember>("Theo");
+  const [busy, setBusy] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const [resultLinks, setResultLinks] = useState<{
+    pollId: string;
+    scheduleHref: string;
+    minutesUrl: string | null;
+    taskUrl: string | null;
+  } | null>(null);
 
   const monthLabel = new Intl.DateTimeFormat("ja-JP", {
     timeZone: "Asia/Tokyo",
@@ -246,12 +263,86 @@ function HubTeamFreeHeatmap({
     return buildSlotHeatMap(buildDayTimeSlots(selectedDateKey), monthFree, selectedDateKey);
   }, [selectedDateKey, monthFree]);
 
+  function toggleSlot(slotKey: string) {
+    setSelectedSlotKeys((current) => {
+      const next = new Set(current);
+      if (next.has(slotKey)) next.delete(slotKey);
+      else next.add(slotKey);
+      return next;
+    });
+    setResultLinks(null);
+  }
+
+  async function handleCreatePlan() {
+    if (!selectedDateKey || selectedSlotKeys.size === 0 || !title.trim()) {
+      setMessage(enJa("Select slots and enter a title.", "枠を選び、タイトルを入力してください。"));
+      return;
+    }
+
+    setBusy(true);
+    setMessage(null);
+
+    try {
+      const daySlots = buildDayTimeSlots(selectedDateKey);
+      const slots = daySlots
+        .filter((slot) => selectedSlotKeys.has(slot.slotKey))
+        .map((slot) => ({ start: slot.start, end: slot.end }));
+
+      const scheduleUrl =
+        typeof window !== "undefined" ? `${window.location.origin}/schedule` : "/schedule";
+
+      const response = await fetch("/api/schedule", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          action: "hub-plan",
+          title: title.trim(),
+          category,
+          person,
+          slots,
+          createMinutes: category.startsWith("MTG"),
+          scheduleUrl,
+        }),
+      });
+
+      if (!response.ok) {
+        const body = (await response.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(body?.error ?? "Failed to create plan");
+      }
+
+      const result = (await response.json()) as {
+        pollId: string;
+        task: { url: string } | null;
+        minutes: { url: string } | null;
+      };
+
+      setResultLinks({
+        pollId: result.pollId,
+        scheduleHref: `/schedule?pollId=${encodeURIComponent(result.pollId)}`,
+        minutesUrl: result.minutes?.url ?? null,
+        taskUrl: result.task?.url ?? null,
+      });
+      setMessage(
+        enJa(
+          "Created candidates for Phase 3. Members can now RSVP on Schedule.",
+          "候補を作成しました。Phase 3（予定調整）で出欠できます。",
+        ),
+      );
+      setSelectedSlotKeys(new Set());
+      setTitle("");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Create failed");
+    } finally {
+      setBusy(false);
+    }
+  }
+
   return (
     <div>
       <p className="mb-3 text-xs text-slate-400">
         {enJa(
-          "Team availability heatmap. Brighter slots mean more members are free.",
-          "チーム全体の空きヒートマップです。光るほど多くのメンバーが空いています。",
+          "Phase 2: pick glowing shared free slots and assign MTG / Event / Other.",
+          "Phase 2：光っている共通空きを選び、MTG / イベント / その他に振り分けます。",
         )}
       </p>
 
@@ -294,7 +385,11 @@ function HubTeamFreeHeatmap({
               <button
                 key={cell.dateKey}
                 type="button"
-                onClick={() => setSelectedDateKey(cell.dateKey)}
+                onClick={() => {
+                  setSelectedDateKey(cell.dateKey);
+                  setSelectedSlotKeys(new Set());
+                  setResultLinks(null);
+                }}
                 className={`flex h-12 flex-col items-center justify-center rounded-lg border text-sm transition-all ${getDayHeatCellClasses(summary.maxRate, summary.slotCount > 0)} ${
                   selectedDateKey === cell.dateKey ? "ring-2 ring-blue-400" : ""
                 }`}
@@ -312,31 +407,140 @@ function HubTeamFreeHeatmap({
       </div>
 
       {selectedDateKey && (
-        <div className="mt-4 rounded-xl border border-slate-100 p-3">
-          <div className="mb-2 flex items-center justify-between">
+        <div className="mt-4 space-y-4 rounded-xl border border-slate-100 p-3">
+          <div className="flex flex-wrap items-center justify-between gap-2">
             <p className="text-xs font-medium text-slate-600">
-              {selectedDateKey.replace(/-/g, "/")}
+              {selectedDateKey.replace(/-/g, "/")} ·{" "}
+              {enJa("Click slots to assign", "枠をクリックして選択")}
             </p>
-            <Link
-              href="/schedule"
-              className="text-xs font-medium text-blue-600 hover:text-blue-700"
-            >
-              {enJa("Create candidates on schedule →", "予定調整で候補を作成 →")}
-            </Link>
+            <span className="text-[11px] text-slate-400">
+              {enJa(
+                `${selectedSlotKeys.size} selected`,
+                `${selectedSlotKeys.size}枠選択中`,
+              )}
+            </span>
           </div>
+
           <div className="grid grid-cols-3 gap-1.5 sm:grid-cols-4 md:grid-cols-5">
-            {selectedHeat.map((slot) => (
-              <div
-                key={slot.slotKey}
-                className={`rounded-lg border px-2 py-2 text-center text-xs ${getSlotHeatClasses(slot.tier, false)}`}
-              >
-                <div className="font-medium">{slot.label}</div>
-                <div className="mt-0.5 text-[10px] opacity-80">
-                  {slot.availableCount}/{slot.totalMembers}
-                </div>
-              </div>
-            ))}
+            {selectedHeat.map((slot) => {
+              const selected = selectedSlotKeys.has(slot.slotKey);
+              return (
+                <button
+                  key={slot.slotKey}
+                  type="button"
+                  onClick={() => toggleSlot(slot.slotKey)}
+                  className={`rounded-lg border px-2 py-2 text-center text-xs transition-all ${getSlotHeatClasses(slot.tier, selected)}`}
+                >
+                  <div className="font-medium">{slot.label}</div>
+                  <div className="mt-0.5 text-[10px] opacity-80">
+                    {slot.availableCount}/{slot.totalMembers}
+                  </div>
+                </button>
+              );
+            })}
           </div>
+
+          <div className="grid gap-3 border-t border-slate-100 pt-3 sm:grid-cols-2">
+            <label className="block sm:col-span-2">
+              <span className="text-xs text-slate-500">{enJa("Title", "タイトル")}</span>
+              <input
+                value={title}
+                onChange={(event) => setTitle(event.target.value)}
+                placeholder="例: 運営MTG #2"
+                className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm outline-none focus:ring-2 focus:ring-blue-100"
+              />
+            </label>
+
+            <label className="block">
+              <span className="text-xs text-slate-500">{enJa("Assign as", "振り分け")}</span>
+              <select
+                value={category}
+                onChange={(event) => setCategory(event.target.value as ScheduleCategory)}
+                className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
+              >
+                {SCHEDULE_CATEGORIES.map((item) => (
+                  <option key={item} value={item}>
+                    {item}
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label className="block">
+              <span className="text-xs text-slate-500">{enJa("Created by", "作成者")}</span>
+              <select
+                value={person}
+                onChange={(event) => setPerson(event.target.value as ScheduleMember)}
+                className="mt-1 w-full rounded-xl border border-slate-200 px-3 py-2 text-sm"
+              >
+                {SCHEDULE_MEMBERS.map((item) => (
+                  <option key={item} value={item}>
+                    {item}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+
+          <p className="text-[11px] text-slate-400">
+            {category.startsWith("MTG")
+              ? enJa(
+                  "MTG: creates Schedule candidates + Meeting Minutes + Project task.",
+                  "MTG：予定候補 ＋ 議事録空ページ ＋ Project課題を自動作成します。",
+                )
+              : enJa(
+                  "Event/Other: creates Schedule candidates + Project task (no minutes).",
+                  "Event/Other：予定候補 ＋ Project課題を作成します（議事録はなし）。",
+                )}
+          </p>
+
+          <button
+            type="button"
+            disabled={busy || selectedSlotKeys.size === 0 || !title.trim()}
+            onClick={() => void handleCreatePlan()}
+            className="rounded-full bg-emerald-600 px-5 py-2.5 text-sm font-medium text-white hover:bg-emerald-700 disabled:opacity-50"
+          >
+            {busy
+              ? enJa("Creating…", "作成中…")
+              : enJa("Create for Phase 3", "Phase 3用に作成")}
+          </button>
+
+          {message && (
+            <p className="rounded-lg border border-blue-100 bg-blue-50 px-3 py-2 text-xs text-blue-800">
+              {message}
+            </p>
+          )}
+
+          {resultLinks && (
+            <div className="flex flex-wrap gap-3 text-xs">
+              <Link
+                href={resultLinks.scheduleHref}
+                className="font-medium text-blue-600 hover:text-blue-700"
+              >
+                {enJa("Open Phase 3 RSVP →", "Phase 3 出欠へ →")}
+              </Link>
+              {resultLinks.minutesUrl && (
+                <a
+                  href={resultLinks.minutesUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="font-medium text-slate-600 hover:text-slate-800"
+                >
+                  {enJa("Meeting minutes", "議事録")}
+                </a>
+              )}
+              {resultLinks.taskUrl && (
+                <a
+                  href={resultLinks.taskUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="font-medium text-slate-600 hover:text-slate-800"
+                >
+                  {enJa("Project task", "課題")}
+                </a>
+              )}
+            </div>
+          )}
         </div>
       )}
 
@@ -350,8 +554,8 @@ function HubTeamFreeHeatmap({
           {enJa("Half+", "半数以上")}
         </span>
         <span className="flex items-center gap-1.5">
-          <span className="h-3 w-3 rounded border border-slate-100 bg-white" />
-          {enJa("No votes", "未入力")}
+          <span className="h-3 w-3 rounded border border-emerald-400 bg-emerald-500" />
+          {enJa("Selected", "選択中")}
         </span>
       </div>
     </div>
@@ -445,7 +649,10 @@ export function HubCalendar({
               ? enJa("Confirmed events preview.", "確定済みイベントのプレビューです。")
               : mode === "input"
                 ? enJa("Phase 1: mark your free slots.", "Phase 1：空き時間を入力します。")
-                : enJa("Phase 2: team heatmap for planning.", "Phase 2：チーム空きの俯瞰です。")}
+                : enJa(
+                    "Phase 2: assign glowing slots to MTG / Event / Other.",
+                    "Phase 2：光る枠を MTG / イベント / その他に振り分けます。",
+                  )}
           </p>
         </div>
         <Link

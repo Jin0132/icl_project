@@ -7,6 +7,8 @@ import { parseProjectTask } from "./parse-project-task";
 import { partitionTasks } from "./task-filters";
 import {
   PROJECT_NOTION_PROPERTIES,
+  type PersonInCharge,
+  type ProjectCategory,
   type ProjectTask,
   type TasksApiResponse,
 } from "./project-schema";
@@ -80,8 +82,23 @@ export async function fetchTasksResponse(): Promise<TasksApiResponse> {
   };
 }
 
-export async function createProjectTask(title: string): Promise<ProjectTask> {
-  const trimmedTitle = title.trim();
+export type CreateProjectTaskInput = {
+  title: string;
+  category?: ProjectCategory | null;
+  personInCharge?: PersonInCharge | null;
+  dueDate?: string | null;
+  memo?: string | null;
+  discussInMeeting?: boolean;
+};
+
+export async function createProjectTask(
+  titleOrInput: string | CreateProjectTaskInput,
+): Promise<ProjectTask> {
+  const input =
+    typeof titleOrInput === "string"
+      ? { title: titleOrInput }
+      : titleOrInput;
+  const trimmedTitle = input.title.trim();
 
   if (!trimmedTitle) {
     throw new Error("Title is required");
@@ -90,15 +107,43 @@ export async function createProjectTask(title: string): Promise<ProjectTask> {
   const notion = getNotionClient();
   const databaseId = getProjectDatabaseId();
 
+  const properties: Record<string, unknown> = {
+    [PROJECT_NOTION_PROPERTIES.title]: {
+      title: [{ text: { content: trimmedTitle.slice(0, 2000) } }],
+    },
+    [PROJECT_NOTION_PROPERTIES.done]: { checkbox: false },
+    [PROJECT_NOTION_PROPERTIES.discussInMeeting]: {
+      checkbox: Boolean(input.discussInMeeting),
+    },
+  };
+
+  if (input.category) {
+    properties[PROJECT_NOTION_PROPERTIES.category] = {
+      select: { name: input.category },
+    };
+  }
+
+  if (input.personInCharge) {
+    properties[PROJECT_NOTION_PROPERTIES.personInCharge] = {
+      select: { name: input.personInCharge },
+    };
+  }
+
+  if (input.dueDate) {
+    properties[PROJECT_NOTION_PROPERTIES.dueDate] = {
+      date: { start: input.dueDate },
+    };
+  }
+
+  if (input.memo?.trim()) {
+    properties[PROJECT_NOTION_PROPERTIES.memo] = {
+      rich_text: [{ text: { content: input.memo.trim().slice(0, 2000) } }],
+    };
+  }
+
   const page = await notion.pages.create({
     parent: { database_id: databaseId },
-    properties: {
-      [PROJECT_NOTION_PROPERTIES.title]: {
-        title: [{ text: { content: trimmedTitle.slice(0, 2000) } }],
-      },
-      [PROJECT_NOTION_PROPERTIES.done]: { checkbox: false },
-      [PROJECT_NOTION_PROPERTIES.discussInMeeting]: { checkbox: false },
-    },
+    properties: properties as Parameters<typeof notion.pages.create>[0]["properties"],
   });
 
   if (!isFullPage(page)) {

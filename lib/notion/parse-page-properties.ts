@@ -82,3 +82,31 @@ export function getMultiSelect(
 
   return [];
 }
+
+/** Notion Place プロパティを表示用文字列に変換 */
+export function getPlaceLabel(
+  properties: PageObjectResponse["properties"],
+  propertyName: string,
+): string | null {
+  const property = properties[propertyName];
+
+  if (property?.type !== "place" || !property.place) {
+    return null;
+  }
+
+  const { name, address } = property.place;
+  const parts = [name?.trim(), address?.trim()].filter(
+    (part): part is string => Boolean(part),
+  );
+
+  if (parts.length === 0) {
+    return null;
+  }
+
+  // name と address がほぼ同じなら重複を避ける
+  if (parts.length === 2 && parts[0] === parts[1]) {
+    return parts[0];
+  }
+
+  return parts.join(" · ");
+}

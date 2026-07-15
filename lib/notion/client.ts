@@ -53,3 +53,11 @@ export function getCalendarDatabaseId(): string {
 
   return databaseId;
 }
+
+/** Meeting Minutes parent page under ICL Master */
+export function getMeetingMinutesParentId(): string {
+  return (
+    process.env.NOTION_MEETING_MINUTES_PARENT_ID ??
+    "39876122-ab9f-80b7-bc8b-d4155bc5d50c"
+  );
+}

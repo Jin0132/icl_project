@@ -1,5 +1,6 @@
 import {
-  formatScheduleDateTime,
+  formatScheduleDateLabel,
+  formatScheduleTimeRange,
   type AppEventCategory,
 } from "@/lib/notion/notion-datetime";
 import { APP_CONFIRMED_CALENDAR_TAG, type ConfirmedEvent } from "@/lib/notion/schedule-schema";
@@ -71,7 +72,9 @@ function EventChip({
     event.displayTitle ?? event.name.replace(/^\[(MTG|Event|Other)\]\s/, "");
   const category = event.category ?? "Other";
   const participants = participantTags(event.tags);
-  const timeLabel = formatScheduleDateTime(event.start, event.isDatetime);
+  const dateLabel = formatScheduleDateLabel(event.start, event.isDatetime);
+  const timeRange = formatScheduleTimeRange(event.start, event.end, event.isDatetime);
+  const location = event.location?.trim() || null;
 
   return (
     <div className="group/event relative">
@@ -83,14 +86,31 @@ function EventChip({
       </div>
 
       <div
-        className="pointer-events-none absolute left-0 top-full z-30 mt-1 w-48 -translate-y-0.5 scale-95 rounded-xl border border-slate-200 bg-white p-2.5 opacity-0 shadow-[0_8px_24px_rgba(0,0,0,0.12)] transition-all duration-150 group-hover/event:translate-y-0 group-hover/event:scale-100 group-hover/event:opacity-100"
+        className="pointer-events-none absolute left-0 top-full z-30 mt-1 w-56 -translate-y-0.5 scale-95 rounded-xl border border-slate-200 bg-white p-2.5 opacity-0 shadow-[0_8px_24px_rgba(0,0,0,0.12)] transition-all duration-150 group-hover/event:translate-y-0 group-hover/event:scale-100 group-hover/event:opacity-100"
         role="tooltip"
       >
         <p className="text-xs font-semibold text-slate-800">{displayTitle}</p>
-        <p className="mt-1 text-[10px] text-slate-500">{timeLabel}</p>
         <p className="mt-1 text-[10px] text-slate-500">{CATEGORY_LABEL[category]}</p>
+
+        <dl className="mt-2 space-y-1.5 border-t border-slate-100 pt-2 text-[10px]">
+          <div>
+            <dt className="text-slate-400">{enJa("Date", "日付")}</dt>
+            <dd className="mt-0.5 font-medium text-slate-700">{dateLabel}</dd>
+          </div>
+          <div>
+            <dt className="text-slate-400">{enJa("Time", "実施時間")}</dt>
+            <dd className="mt-0.5 font-medium text-slate-700">{timeRange}</dd>
+          </div>
+          <div>
+            <dt className="text-slate-400">{enJa("Location", "場所")}</dt>
+            <dd className={`mt-0.5 font-medium ${location ? "text-slate-700" : "text-slate-400"}`}>
+              {location ?? enJa("Not set", "未設定")}
+            </dd>
+          </div>
+        </dl>
+
         {participants.length > 0 && (
-          <p className="mt-1.5 border-t border-slate-100 pt-1.5 text-[10px] leading-relaxed text-slate-600">
+          <p className="mt-2 border-t border-slate-100 pt-2 text-[10px] leading-relaxed text-slate-600">
             {participants.join(" · ")}
           </p>
         )}

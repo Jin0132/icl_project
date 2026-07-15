@@ -22,7 +22,15 @@ export type ProjectNotionPropertyName =
 
 export type PersonInCharge = "Asaka" | "Makiko" | "Theo" | "All";
 
-export type ProjectCategory = "Define Company";
+export const PROJECT_CATEGORIES = [
+  "Strategy & Governance",
+  "Finance",
+  "Team & HR",
+  "Marketing & Research",
+  "Operations & Systems",
+] as const;
+
+export type ProjectCategory = (typeof PROJECT_CATEGORIES)[number];
 
 /** Clean JSON shape returned to the frontend */
 export interface ProjectTask {

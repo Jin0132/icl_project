@@ -1,10 +1,13 @@
 import { NextResponse } from "next/server";
 import {
   createCandidateSlot,
+  createPlanFromHubSlots,
   fetchScheduleResponse,
   markAvailable,
   markEventDecline,
   toggleHubFreeSlot,
+  type CreatePlanFromHubResult,
+  type HubPlanSlotInput,
 } from "@/lib/notion/schedule";
 import {
   SCHEDULE_CATEGORIES,
@@ -16,7 +19,7 @@ import {
 } from "@/lib/notion/schedule-schema";
 
 type CreateScheduleBody = {
-  action?: "candidate" | "available" | "decline" | "hub-free";
+  action?: "candidate" | "available" | "decline" | "hub-free" | "hub-plan";
   title?: string;
   category?: ScheduleCategory;
   person?: ScheduleMember;
@@ -26,6 +29,9 @@ type CreateScheduleBody = {
   memo?: string;
   candidateId?: string;
   collectionId?: string;
+  slots?: HubPlanSlotInput[];
+  createMinutes?: boolean;
+  scheduleUrl?: string;
 };
 
 function isScheduleCategory(value: string): value is ScheduleCategory {
@@ -58,6 +64,7 @@ export async function POST(
   NextResponse<
     | ScheduleDraft
     | { action: "created" | "removed"; slot: import("@/lib/notion/schedule-schema").HubFreeSlot | null }
+    | CreatePlanFromHubResult
     | { error: string }
   >
 > {
@@ -115,6 +122,37 @@ export async function POST(
       });
 
       return NextResponse.json(result, { status: result.action === "created" ? 201 : 200 });
+    }
+
+    if (action === "hub-plan") {
+      const title = body.title?.trim();
+      const slots = body.slots ?? [];
+
+      if (!title || !body.category || !body.person || !isScheduleMember(body.person)) {
+        return NextResponse.json(
+          { error: "title, category, person, and slots are required" },
+          { status: 400 },
+        );
+      }
+
+      if (!isScheduleCategory(body.category)) {
+        return NextResponse.json({ error: "Invalid category" }, { status: 400 });
+      }
+
+      if (slots.length === 0) {
+        return NextResponse.json({ error: "Select at least one slot" }, { status: 400 });
+      }
+
+      const result = await createPlanFromHubSlots({
+        title,
+        category: body.category,
+        person: body.person,
+        slots,
+        createMinutes: body.createMinutes,
+        scheduleUrl: body.scheduleUrl,
+      });
+
+      return NextResponse.json(result, { status: 201 });
     }
 
     const title = body.title?.trim();

@@ -14,6 +14,7 @@ export const CALENDAR_PROPERTIES = {
   name: "Name",
   date: "Date",
   tags: "Tags",
+  location: "場所",
 } as const;
 
 export const SCHEDULE_CATEGORIES = [
@@ -66,6 +67,8 @@ export interface ConfirmedEvent {
   end: string | null;
   isDatetime: boolean;
   tags: string[];
+  /** Notion「場所」プロパティ（name / address） */
+  location: string | null;
   url: string;
   createdTime: string;
   lastEditedTime: string;

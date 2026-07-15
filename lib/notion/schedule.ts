@@ -732,3 +732,122 @@ export async function toggleHubFreeSlot(
 
   return { action: "created", slot };
 }
+
+export type HubPlanSlotInput = {
+  start: string;
+  end: string;
+};
+
+export type CreatePlanFromHubInput = {
+  title: string;
+  category: ScheduleCategory;
+  person: ScheduleMember;
+  slots: HubPlanSlotInput[];
+  createMinutes?: boolean;
+  scheduleUrl?: string;
+};
+
+export type CreatePlanFromHubResult = {
+  pollId: string;
+  candidates: ScheduleDraft[];
+  task: Awaited<ReturnType<typeof import("./project-tasks").createProjectTask>> | null;
+  minutes: Awaited<ReturnType<typeof import("./meeting-minutes").createMeetingMinutesDraft>> | null;
+};
+
+/** 連続する30分枠を1本の候補にまとめる */
+export function mergeContiguousHubSlots(
+  slots: HubPlanSlotInput[],
+): Array<{ start: string; end: string }> {
+  if (slots.length === 0) return [];
+
+  const normalize = (value: string) => value.slice(0, 16);
+  const sorted = [...slots].sort((a, b) => a.start.localeCompare(b.start));
+  const groups: Array<{ start: string; end: string }> = [];
+  let current = { ...sorted[0] };
+
+  for (let index = 1; index < sorted.length; index += 1) {
+    const next = sorted[index];
+    if (normalize(current.end) === normalize(next.start)) {
+      current = { start: current.start, end: next.end };
+      continue;
+    }
+
+    groups.push(current);
+    current = { ...next };
+  }
+
+  groups.push(current);
+  return groups;
+}
+
+export async function createPlanFromHubSlots(
+  input: CreatePlanFromHubInput,
+): Promise<CreatePlanFromHubResult> {
+  const title = input.title.trim();
+  if (!title) {
+    throw new Error("title is required");
+  }
+
+  if (input.slots.length === 0) {
+    throw new Error("At least one slot is required");
+  }
+
+  const pollId = createPollId();
+  const merged = mergeContiguousHubSlots(input.slots);
+
+  const candidates: ScheduleDraft[] = [];
+  for (const slot of merged) {
+    const candidate = await createCandidateSlot({
+      title,
+      category: input.category,
+      person: input.person,
+      start: slot.start,
+      end: slot.end,
+      pollId,
+      memo: `hub-plan:${pollId}`,
+    });
+    candidates.push(candidate);
+  }
+
+  const { createProjectTask } = await import("./project-tasks");
+  const first = candidates[0];
+  const dateKey = first.start.slice(0, 10);
+  const timeLabel = candidates
+    .map((candidate) => {
+      const start = candidate.start.slice(11, 16);
+      const end = candidate.end?.slice(11, 16) ?? "";
+      return end ? `${start}–${end}` : start;
+    })
+    .join(", ");
+
+  const categoryShort = input.category.split(" / ")[0];
+  const task = await createProjectTask({
+    title: `[${categoryShort}] ${title} — finalize RSVP`,
+    category: "Operations & Systems",
+    personInCharge: input.person === "Makiko" || input.person === "Asaka" || input.person === "Theo"
+      ? input.person
+      : "All",
+    dueDate: dateKey,
+    discussInMeeting: input.category.startsWith("MTG"),
+    memo: `Auto-created from Hub Phase 2. Poll: ${pollId}. Slots: ${timeLabel}. Confirm on /schedule.`,
+  });
+
+  let minutes: CreatePlanFromHubResult["minutes"] = null;
+  const shouldCreateMinutes =
+    input.createMinutes ?? input.category.startsWith("MTG");
+
+  if (shouldCreateMinutes) {
+    const { createMeetingMinutesDraft } = await import("./meeting-minutes");
+    const minutesTitle = `${dateKey} — ${title}`;
+    minutes = await createMeetingMinutesDraft({
+      title: minutesTitle,
+      dateKey,
+      typeLabel: input.category,
+      timeLabel,
+      pollId,
+      scheduleUrl: input.scheduleUrl,
+    });
+  }
+
+  return { pollId, candidates, task, minutes };
+}

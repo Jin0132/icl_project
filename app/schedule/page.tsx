@@ -532,6 +532,12 @@ export default function SchedulePage() {
   const [confirmedCategoryFilter, setConfirmedCategoryFilter] =
     useState<ConfirmedCategoryFilter>("all");
   const [calendarMonth, setCalendarMonth] = useState(() => new Date());
+  const [focusPollId, setFocusPollId] = useState<string | null>(null);
+
+  useEffect(() => {
+    const pollId = new URLSearchParams(window.location.search).get("pollId");
+    setFocusPollId(pollId);
+  }, []);
 
   const fetchSchedule = useCallback(async () => {
     setLoadState((current) => (current === "success" ? current : "loading"));
@@ -563,7 +569,12 @@ export default function SchedulePage() {
     );
   }, [data, categoryFilter]);
 
-  const pollGroups = useMemo(() => groupCandidates(filteredDrafts), [filteredDrafts]);
+  const pollGroups = useMemo(() => {
+    const groups = groupCandidates(filteredDrafts);
+    if (!focusPollId) return groups;
+    const focused = groups.filter((group) => group.pollId === focusPollId);
+    return focused.length > 0 ? focused : groups;
+  }, [filteredDrafts, focusPollId]);
 
   const availabilityByCandidate = useMemo(() => {
     const map = new Map<string, ScheduleDraft[]>();
@@ -1011,6 +1022,29 @@ export default function SchedulePage() {
         {formMessage && (
           <div className="mb-6 rounded-xl border border-blue-100 bg-blue-50 px-5 py-3 text-sm text-blue-800">
             {formMessage}
+          </div>
+        )}
+
+        {focusPollId && (
+          <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-5 py-3 text-sm text-emerald-900">
+            <p>
+              {enJa(
+                `Phase 2 → Phase 3: focusing poll ${focusPollId}`,
+                `Phase 2 → Phase 3：この候補（${focusPollId}）を表示中`,
+              )}
+            </p>
+            <button
+              type="button"
+              onClick={() => {
+                setFocusPollId(null);
+                const url = new URL(window.location.href);
+                url.searchParams.delete("pollId");
+                window.history.replaceState({}, "", url.pathname + url.search);
+              }}
+              className="rounded-full border border-emerald-300 bg-white px-3 py-1 text-xs font-medium text-emerald-800 hover:bg-emerald-100"
+            >
+              {enJa("Show all", "すべて表示")}
+            </button>
           </div>
         )}
 

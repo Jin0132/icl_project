@@ -2,6 +2,7 @@ import type { PageObjectResponse } from "@notionhq/client";
 import {
   getDate,
   getMultiSelect,
+  getPlaceLabel,
   getRichText,
   getSelect,
   getTitle,
@@ -61,6 +62,7 @@ export function parseConfirmedEvent(page: PageObjectResponse): ConfirmedEvent {
     end: date.end,
     isDatetime: date.isDatetime,
     tags: getMultiSelect(properties, CALENDAR_PROPERTIES.tags),
+    location: getPlaceLabel(properties, CALENDAR_PROPERTIES.location),
     url: page.url,
     createdTime: page.created_time,
     lastEditedTime: page.last_edited_time,
