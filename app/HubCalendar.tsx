@@ -37,26 +37,36 @@ function MemberPills({
   activeMember,
   onChange,
 }: {
-  activeMember: ScheduleMember;
+  activeMember: ScheduleMember | null;
   onChange: (member: ScheduleMember) => void;
 }) {
   return (
-    <div className="flex flex-wrap items-center gap-2">
-      <span className="text-xs text-slate-500">{enJa("Answering as", "回答者")}</span>
-      {SCHEDULE_MEMBERS.map((member) => (
-        <button
-          key={member}
-          type="button"
-          onClick={() => onChange(member)}
-          className={`rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
-            activeMember === member
-              ? "border-blue-400 bg-blue-600 text-white"
-              : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
-          }`}
-        >
-          {member}
-        </button>
-      ))}
+    <div className="space-y-2">
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-xs text-slate-500">{enJa("Answering as", "回答者")}</span>
+        {SCHEDULE_MEMBERS.map((member) => (
+          <button
+            key={member}
+            type="button"
+            onClick={() => onChange(member)}
+            className={`rounded-full border px-3 py-1.5 text-xs font-medium transition-colors ${
+              activeMember === member
+                ? "border-blue-400 bg-blue-600 text-white"
+                : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
+            }`}
+          >
+            {member}
+          </button>
+        ))}
+      </div>
+      {!activeMember && (
+        <p className="text-xs text-amber-700">
+          {enJa(
+            "Select who you are answering as before marking free slots.",
+            "先に回答者を選んでから、空き時間を入力してください。",
+          )}
+        </p>
+      )}
     </div>
   );
 }
@@ -73,7 +83,7 @@ function HubPersonalFreeInput({
   month: Date;
   onMonthChange: (next: Date) => void;
   collectionId: string;
-  activeMember: ScheduleMember;
+  activeMember: ScheduleMember | null;
   hubFree: HubFreeSlot[];
   pendingSlotKeys: Set<string>;
   onToggleSlot: (start: string) => void;
@@ -104,12 +114,16 @@ function HubPersonalFreeInput({
   const memberSlotKeys = useMemo(
     () =>
       new Set(
-        monthFree
-          .filter((slot) => slot.person === activeMember)
-          .map((slot) => slot.slotKey),
+        activeMember
+          ? monthFree
+              .filter((slot) => slot.person === activeMember)
+              .map((slot) => slot.slotKey)
+          : [],
       ),
     [monthFree, activeMember],
   );
+
+  const canEditSlots = Boolean(activeMember);
 
   const heatByDay = useMemo(() => {
     const map = new Map<string, ReturnType<typeof getDayHeatSummary>>();
@@ -165,9 +179,11 @@ function HubPersonalFreeInput({
 
             const summary = heatByDay.get(cell.dateKey);
             const isSelected = selectedDateKey === cell.dateKey;
-            const myCount = monthFree.filter(
-              (slot) => slot.person === activeMember && slot.dateKey === cell.dateKey,
-            ).length;
+            const myCount = activeMember
+              ? monthFree.filter(
+                  (slot) => slot.person === activeMember && slot.dateKey === cell.dateKey,
+                ).length
+              : 0;
 
             return (
               <button
@@ -191,9 +207,18 @@ function HubPersonalFreeInput({
       </div>
 
       {selectedDateKey && (
-        <div className="mt-4 rounded-xl border border-slate-100 p-3">
+        <div
+          className={`mt-4 rounded-xl border border-slate-100 p-3 ${
+            canEditSlots ? "" : "opacity-60"
+          }`}
+        >
           <p className="mb-2 text-xs font-medium text-slate-600">
             {selectedDateKey.replace(/-/g, "/")} · {enJa("30-min slots", "30分枠")}
+            {!canEditSlots && (
+              <span className="ml-2 font-normal text-amber-700">
+                {enJa("(select a person first)", "（先に回答者を選択）")}
+              </span>
+            )}
           </p>
           <div className="grid grid-cols-3 gap-1.5 sm:grid-cols-4 md:grid-cols-5">
             {daySlots.map((slot) => {
@@ -203,9 +228,9 @@ function HubPersonalFreeInput({
                 <button
                   key={slot.slotKey}
                   type="button"
-                  disabled={pending}
+                  disabled={!canEditSlots || pending}
                   onClick={() => onToggleSlot(slot.start)}
-                  className={`rounded-lg border px-2 py-2 text-xs font-medium transition-all disabled:opacity-70 ${
+                  className={`rounded-lg border px-2 py-2 text-xs font-medium transition-all disabled:cursor-not-allowed disabled:opacity-50 ${
                     selected
                       ? "border-emerald-400 bg-emerald-500 text-white"
                       : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
@@ -571,7 +596,7 @@ export function HubCalendar({
   const [mode, setMode] = useState<HubCalendarMode>("confirmed");
   const [month, setMonth] = useState(() => new Date());
   const [confirmedMonth, setConfirmedMonth] = useState(() => new Date());
-  const [activeMember, setActiveMember] = useState<ScheduleMember>("Theo");
+  const [activeMember, setActiveMember] = useState<ScheduleMember | null>(null);
   const [hubFree, setHubFree] = useState<HubFreeSlot[]>([]);
   const [pendingSlotKeys, setPendingSlotKeys] = useState(() => new Set<string>());
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -597,6 +622,16 @@ export function HubCalendar({
   }, [mode, fetchHubData]);
 
   async function handleToggleSlot(start: string) {
+    if (!activeMember) {
+      setLoadError(
+        enJa(
+          "Select who you are answering as first.",
+          "先に回答者を選択してください。",
+        ),
+      );
+      return;
+    }
+
     const slotKey = buildHubSlotKey(start);
     if (pendingSlotKeys.has(slotKey)) return;
 
