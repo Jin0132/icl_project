@@ -672,7 +672,56 @@ type ToggleHubFreeInput = {
   person: ScheduleMember;
   start: string;
   collectionId: string;
+  /** クライアントが既に知っている操作。指定時は高速パスを使う */
+  intent?: "add" | "remove";
+  /** remove 時に分かっている Draft ID（optimistic: 以外） */
+  draftId?: string | null;
 };
+
+async function cancelHubFreeById(draftId: string): Promise<void> {
+  const notion = getNotionClient();
+  await notion.pages.update({
+    page_id: draftId,
+    properties: {
+      [SCHEDULE_DRAFT_PROPERTIES.status]: {
+        select: { name: "Cancelled / 取消" },
+      },
+    },
+  });
+}
+
+async function findHubFreeDraftsForSlot(input: {
+  person: ScheduleMember;
+  collectionId: string;
+  slotKey: string;
+  memo: string;
+}): Promise<ScheduleDraft[]> {
+  // 狭いフィルタで対象だけ取得（月全体の hub-slot 全件スキャンを避ける）
+  const pages = await queryDraftPages({
+    and: [
+      {
+        property: SCHEDULE_DRAFT_PROPERTIES.poll,
+        rich_text: { equals: input.collectionId },
+      },
+      {
+        property: SCHEDULE_DRAFT_PROPERTIES.person,
+        select: { equals: input.person },
+      },
+      {
+        property: SCHEDULE_DRAFT_PROPERTIES.memo,
+        rich_text: { equals: input.memo },
+      },
+    ],
+  } as NotionQueryFilter);
+
+  return pages
+    .map(parseScheduleDraft)
+    .filter(isActiveDraft)
+    .filter((draft) => {
+      const parsed = parseHubFreeMemo(draft.memo);
+      return parsed?.slotKey === input.slotKey || buildHubSlotKey(draft.start) === input.slotKey;
+    });
+}
 
 export async function toggleHubFreeSlot(
   input: ToggleHubFreeInput,
@@ -681,64 +730,74 @@ export async function toggleHubFreeSlot(
   const slotKey = buildHubSlotKey(input.start);
   const end = slotEndFromStart(input.start);
   const memo = buildHubFreeMemo(input.collectionId, slotKey);
+  const intent = input.intent;
 
-  const existingPages = await getHubFreeDrafts(input.collectionId);
-  const existingMatches = existingPages.filter((draft) => {
-    if (draft.person !== input.person) return false;
-    const parsed = parseHubFreeMemo(draft.memo);
-    if (parsed?.slotKey === slotKey) return true;
-    // 旧パース不整合や重複作成に対するフォールバック
-    return buildHubSlotKey(draft.start) === slotKey;
-  });
-
-  if (existingMatches.length > 0) {
-    await Promise.all(existingMatches.map((draft) => cancelDraft(draft.id)));
+  // 高速 remove: ID 指定で即キャンセル（再取得しない）
+  if (intent === "remove" && input.draftId && !input.draftId.startsWith("optimistic:")) {
+    await cancelHubFreeById(input.draftId);
     return { action: "removed", slot: null };
   }
 
-  const page = await notion.pages.create({
-    parent: { database_id: getScheduleDraftDatabaseId() },
-    properties: {
-      [SCHEDULE_DRAFT_PROPERTIES.title]: {
-        title: [{ text: { content: "Hub availability / 広域空き" } }],
+  // 高速 add: 存在確認なしで作成（UI側で連打は pending で抑止）
+  if (intent === "add") {
+    const page = await notion.pages.create({
+      parent: { database_id: getScheduleDraftDatabaseId() },
+      properties: {
+        [SCHEDULE_DRAFT_PROPERTIES.title]: {
+          title: [{ text: { content: "Hub availability / 広域空き" } }],
+        },
+        [SCHEDULE_DRAFT_PROPERTIES.category]: {
+          select: { name: "Other / その他" },
+        },
+        [SCHEDULE_DRAFT_PROPERTIES.person]: {
+          select: { name: input.person },
+        },
+        [SCHEDULE_DRAFT_PROPERTIES.creator]: {
+          select: { name: input.person },
+        },
+        [SCHEDULE_DRAFT_PROPERTIES.type]: {
+          select: { name: "Available / 参加可能" },
+        },
+        [SCHEDULE_DRAFT_PROPERTIES.status]: {
+          select: { name: "Open / 調整中" },
+        },
+        [SCHEDULE_DRAFT_PROPERTIES.poll]: {
+          rich_text: [{ text: { content: input.collectionId } }],
+        },
+        [SCHEDULE_DRAFT_PROPERTIES.memo]: {
+          rich_text: [{ text: { content: memo } }],
+        },
+        ...buildNotionDateProperty(input.start, end, true, SCHEDULE_DRAFT_PROPERTIES.date),
       },
-      [SCHEDULE_DRAFT_PROPERTIES.category]: {
-        select: { name: "Other / その他" },
-      },
-      [SCHEDULE_DRAFT_PROPERTIES.person]: {
-        select: { name: input.person },
-      },
-      [SCHEDULE_DRAFT_PROPERTIES.creator]: {
-        select: { name: input.person },
-      },
-      [SCHEDULE_DRAFT_PROPERTIES.type]: {
-        select: { name: "Available / 参加可能" },
-      },
-      [SCHEDULE_DRAFT_PROPERTIES.status]: {
-        select: { name: "Open / 調整中" },
-      },
-      [SCHEDULE_DRAFT_PROPERTIES.poll]: {
-        rich_text: [{ text: { content: input.collectionId } }],
-      },
-      [SCHEDULE_DRAFT_PROPERTIES.memo]: {
-        rich_text: [{ text: { content: memo } }],
-      },
-      ...buildNotionDateProperty(input.start, end, true, SCHEDULE_DRAFT_PROPERTIES.date),
-    },
+    });
+
+    if (!isFullPage(page)) {
+      throw new Error("Created hub free page is not accessible");
+    }
+
+    const draft = parseScheduleDraft(page);
+    const slot = serializeHubFreeFromDraft(draft);
+    if (!slot) {
+      throw new Error("Failed to parse created hub free slot");
+    }
+
+    return { action: "created", slot };
+  }
+
+  // フォールバック / remove without id: 狭い検索のみ
+  const existingMatches = await findHubFreeDraftsForSlot({
+    person: input.person,
+    collectionId: input.collectionId,
+    slotKey,
+    memo,
   });
 
-  if (!isFullPage(page)) {
-    throw new Error("Created hub free page is not accessible");
+  if (existingMatches.length > 0 || intent === "remove") {
+    await Promise.all(existingMatches.map((draft) => cancelHubFreeById(draft.id)));
+    return { action: "removed", slot: null };
   }
 
-  const draft = parseScheduleDraft(page);
-  const slot = serializeHubFreeFromDraft(draft);
-
-  if (!slot) {
-    throw new Error("Failed to parse created hub free slot");
-  }
-
-  return { action: "created", slot };
+  return toggleHubFreeSlot({ ...input, intent: "add" });
 }
 
 export type HubPlanSlotInput = {

@@ -67,7 +67,7 @@ function HubPersonalFreeInput({
   collectionId,
   activeMember,
   hubFree,
-  busy,
+  pendingSlotKeys,
   onToggleSlot,
 }: {
   month: Date;
@@ -75,7 +75,7 @@ function HubPersonalFreeInput({
   collectionId: string;
   activeMember: ScheduleMember;
   hubFree: HubFreeSlot[];
-  busy: boolean;
+  pendingSlotKeys: Set<string>;
   onToggleSlot: (start: string) => void;
 }) {
   const [selectedDateKey, setSelectedDateKey] = useState<string>(() => {
@@ -198,17 +198,18 @@ function HubPersonalFreeInput({
           <div className="grid grid-cols-3 gap-1.5 sm:grid-cols-4 md:grid-cols-5">
             {daySlots.map((slot) => {
               const selected = memberSlotKeys.has(slot.slotKey);
+              const pending = pendingSlotKeys.has(slot.slotKey);
               return (
                 <button
                   key={slot.slotKey}
                   type="button"
-                  disabled={busy}
+                  disabled={pending}
                   onClick={() => onToggleSlot(slot.start)}
-                  className={`rounded-lg border px-2 py-2 text-xs font-medium transition-all disabled:opacity-60 ${
+                  className={`rounded-lg border px-2 py-2 text-xs font-medium transition-all disabled:opacity-70 ${
                     selected
                       ? "border-emerald-400 bg-emerald-500 text-white"
                       : "border-slate-200 bg-white text-slate-600 hover:bg-slate-50"
-                  }`}
+                  } ${pending ? "animate-pulse" : ""}`}
                 >
                   {slot.label}
                 </button>
@@ -572,7 +573,7 @@ export function HubCalendar({
   const [confirmedMonth, setConfirmedMonth] = useState(() => new Date());
   const [activeMember, setActiveMember] = useState<ScheduleMember>("Theo");
   const [hubFree, setHubFree] = useState<HubFreeSlot[]>([]);
-  const [busy, setBusy] = useState(false);
+  const [pendingSlotKeys, setPendingSlotKeys] = useState(() => new Set<string>());
   const [loadError, setLoadError] = useState<string | null>(null);
 
   const collectionId = useMemo(() => buildHubCollectionId(month), [month]);
@@ -597,14 +598,22 @@ export function HubCalendar({
 
   async function handleToggleSlot(start: string) {
     const slotKey = buildHubSlotKey(start);
-    const alreadySelected = hubFree.some(
+    if (pendingSlotKeys.has(slotKey)) return;
+
+    const existing = hubFree.find(
       (item) =>
         item.person === activeMember &&
         item.slotKey === slotKey &&
         item.collectionId === collectionId,
     );
+    const alreadySelected = Boolean(existing);
+    const intent = alreadySelected ? "remove" : "add";
+    const draftId =
+      existing && !existing.id.startsWith("optimistic:") ? existing.id : null;
 
-    // 楽観的更新: タップ直後に選択状態を反映
+    setPendingSlotKeys((current) => new Set(current).add(slotKey));
+
+    // 楽観的更新: タップ直後に選択状態を反映（他枠はすぐ操作可能）
     setHubFree((current) => {
       if (alreadySelected) {
         return current.filter(
@@ -629,7 +638,6 @@ export function HubCalendar({
       return [...current, optimistic];
     });
 
-    setBusy(true);
     try {
       const response = await fetch("/api/schedule", {
         method: "POST",
@@ -639,6 +647,8 @@ export function HubCalendar({
           person: activeMember,
           start,
           collectionId,
+          intent,
+          draftId,
         }),
       });
 
@@ -653,7 +663,7 @@ export function HubCalendar({
       };
 
       setHubFree((current) => {
-        const withoutOptimistic = current.filter(
+        const withoutSlot = current.filter(
           (item) =>
             !(
               item.person === activeMember &&
@@ -663,18 +673,17 @@ export function HubCalendar({
         );
 
         if (result.action === "removed") {
-          return withoutOptimistic;
+          return withoutSlot;
         }
 
         if (result.slot) {
-          return [...withoutOptimistic, result.slot];
+          return [...withoutSlot, result.slot];
         }
 
-        return withoutOptimistic;
+        return withoutSlot;
       });
       setLoadError(null);
     } catch (error) {
-      // 失敗時はサーバー状態に戻す
       await fetchHubData();
       setLoadError(
         error instanceof Error
@@ -682,7 +691,11 @@ export function HubCalendar({
           : enJa("Update failed", "更新に失敗しました"),
       );
     } finally {
-      setBusy(false);
+      setPendingSlotKeys((current) => {
+        const next = new Set(current);
+        next.delete(slotKey);
+        return next;
+      });
     }
   }
 
@@ -759,7 +772,7 @@ export function HubCalendar({
             collectionId={collectionId}
             activeMember={activeMember}
             hubFree={hubFree}
-            busy={busy}
+            pendingSlotKeys={pendingSlotKeys}
             onToggleSlot={handleToggleSlot}
           />
         ) : (

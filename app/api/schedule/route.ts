@@ -32,6 +32,8 @@ type CreateScheduleBody = {
   slots?: HubPlanSlotInput[];
   createMinutes?: boolean;
   scheduleUrl?: string;
+  intent?: "add" | "remove";
+  draftId?: string | null;
 };
 
 function isScheduleCategory(value: string): value is ScheduleCategory {
@@ -119,6 +121,8 @@ export async function POST(
         person: body.person,
         start,
         collectionId,
+        intent: body.intent,
+        draftId: body.draftId,
       });
 
       return NextResponse.json(result, { status: result.action === "created" ? 201 : 200 });
