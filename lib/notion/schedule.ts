@@ -683,14 +683,16 @@ export async function toggleHubFreeSlot(
   const memo = buildHubFreeMemo(input.collectionId, slotKey);
 
   const existingPages = await getHubFreeDrafts(input.collectionId);
-  const existing = existingPages.find(
-    (draft) =>
-      draft.person === input.person &&
-      parseHubFreeMemo(draft.memo)?.slotKey === slotKey,
-  );
+  const existingMatches = existingPages.filter((draft) => {
+    if (draft.person !== input.person) return false;
+    const parsed = parseHubFreeMemo(draft.memo);
+    if (parsed?.slotKey === slotKey) return true;
+    // 旧パース不整合や重複作成に対するフォールバック
+    return buildHubSlotKey(draft.start) === slotKey;
+  });
 
-  if (existing) {
-    await cancelDraft(existing.id);
+  if (existingMatches.length > 0) {
+    await Promise.all(existingMatches.map((draft) => cancelDraft(draft.id)));
     return { action: "removed", slot: null };
   }
 
@@ -700,7 +702,13 @@ export async function toggleHubFreeSlot(
       [SCHEDULE_DRAFT_PROPERTIES.title]: {
         title: [{ text: { content: "Hub availability / 広域空き" } }],
       },
+      [SCHEDULE_DRAFT_PROPERTIES.category]: {
+        select: { name: "Other / その他" },
+      },
       [SCHEDULE_DRAFT_PROPERTIES.person]: {
+        select: { name: input.person },
+      },
+      [SCHEDULE_DRAFT_PROPERTIES.creator]: {
         select: { name: input.person },
       },
       [SCHEDULE_DRAFT_PROPERTIES.type]: {

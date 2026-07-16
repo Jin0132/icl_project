@@ -51,12 +51,21 @@ export function parseHubFreeMemo(memo: string | null): {
 } | null {
   if (!memo?.startsWith(HUB_FREE_MEMO_PREFIX)) return null;
   const rest = memo.slice(HUB_FREE_MEMO_PREFIX.length);
-  const separator = rest.indexOf(":");
-  if (separator === -1) return null;
-  return {
-    collectionId: rest.slice(0, separator),
-    slotKey: rest.slice(separator + 1),
-  };
+  // memo = hub-slot:hub:YYYY-MM:YYYY-MM-DDTHH:mm
+  // collectionId 自体に ":" が含まれるため、先頭の ":" では分割しない
+  const match = rest.match(/^(hub:\d{4}-\d{2}):(\d{4}-\d{2}-\d{2}T\d{2}:\d{2})$/);
+  if (match) {
+    return { collectionId: match[1], slotKey: match[2] };
+  }
+
+  const slotMatch = rest.match(/:(\d{4}-\d{2}-\d{2}T\d{2}:\d{2})$/);
+  if (!slotMatch) return null;
+
+  const slotKey = slotMatch[1];
+  const collectionId = rest.slice(0, -(slotKey.length + 1));
+  if (!collectionId) return null;
+
+  return { collectionId, slotKey };
 }
 
 export function slotEndFromStart(start: string): string {

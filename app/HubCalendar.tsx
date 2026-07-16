@@ -596,6 +596,39 @@ export function HubCalendar({
   }, [mode, fetchHubData]);
 
   async function handleToggleSlot(start: string) {
+    const slotKey = buildHubSlotKey(start);
+    const alreadySelected = hubFree.some(
+      (item) =>
+        item.person === activeMember &&
+        item.slotKey === slotKey &&
+        item.collectionId === collectionId,
+    );
+
+    // 楽観的更新: タップ直後に選択状態を反映
+    setHubFree((current) => {
+      if (alreadySelected) {
+        return current.filter(
+          (item) =>
+            !(
+              item.person === activeMember &&
+              item.slotKey === slotKey &&
+              item.collectionId === collectionId
+            ),
+        );
+      }
+
+      const optimistic: HubFreeSlot = {
+        id: `optimistic:${slotKey}:${activeMember}`,
+        person: activeMember,
+        start,
+        end: start,
+        collectionId,
+        slotKey,
+        dateKey: start.slice(0, 10),
+      };
+      return [...current, optimistic];
+    });
+
     setBusy(true);
     try {
       const response = await fetch("/api/schedule", {
@@ -609,7 +642,10 @@ export function HubCalendar({
         }),
       });
 
-      if (!response.ok) throw new Error("Toggle failed");
+      if (!response.ok) {
+        const body = (await response.json().catch(() => null)) as { error?: string } | null;
+        throw new Error(body?.error ?? "Toggle failed");
+      }
 
       const result = (await response.json()) as {
         action: "created" | "removed";
@@ -617,21 +653,34 @@ export function HubCalendar({
       };
 
       setHubFree((current) => {
+        const withoutOptimistic = current.filter(
+          (item) =>
+            !(
+              item.person === activeMember &&
+              item.slotKey === slotKey &&
+              item.collectionId === collectionId
+            ),
+        );
+
         if (result.action === "removed") {
-          const slotKey = buildHubSlotKey(start);
-          return current.filter(
-            (item) => !(item.person === activeMember && item.slotKey === slotKey),
-          );
+          return withoutOptimistic;
         }
 
         if (result.slot) {
-          return [...current.filter((item) => item.id !== result.slot!.id), result.slot];
+          return [...withoutOptimistic, result.slot];
         }
 
-        return current;
+        return withoutOptimistic;
       });
-    } catch {
-      setLoadError(enJa("Update failed", "更新に失敗しました"));
+      setLoadError(null);
+    } catch (error) {
+      // 失敗時はサーバー状態に戻す
+      await fetchHubData();
+      setLoadError(
+        error instanceof Error
+          ? error.message
+          : enJa("Update failed", "更新に失敗しました"),
+      );
     } finally {
       setBusy(false);
     }
