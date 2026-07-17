@@ -11,6 +11,11 @@ function unauthorized(): NextResponse {
 }
 
 export function middleware(request: NextRequest) {
+  const { pathname } = request.nextUrl;
+  if (pathname === "/events" || pathname.startsWith("/events/")) {
+    return NextResponse.next();
+  }
+
   const sitePassword = process.env.SITE_PASSWORD?.trim();
   if (!sitePassword) {
     return NextResponse.next();

@@ -1,4 +1,9 @@
 import { isFullPage, type PageObjectResponse } from "@notionhq/client";
+import {
+  DEFAULT_EVENT_FEE_YEN,
+  formatEventFeeLineEn,
+  formatEventFeeLineJa,
+} from "@/lib/event-pricing";
 import { getNotionClient, getEventScheduleDatabaseId } from "./client";
 import {
   getCheckbox,
@@ -25,6 +30,7 @@ export type PlannedEvent = {
   date: string | null;
   time: string | null;
   memo: string | null;
+  feeYen: number;
   meetupSent: boolean;
   instagramSent: boolean;
   sentAt: string | null;
@@ -97,7 +103,7 @@ export function buildMeetupCopy(input: {
     "",
     `When: ${when} (JST)`,
     `Where: ${where}`,
-    "Fee: usually ¥500–¥1,000 + 1 drink (check event details)",
+    formatEventFeeLineEn(),
     "",
     "Come say hi, practice languages, and meet people from different backgrounds.",
     "Beginners welcome. No long speeches — just easy conversation.",
@@ -123,6 +129,7 @@ export function buildInstagramCopy(input: {
   return [
     `${title}`,
     `${when} @ ${where}`,
+    formatEventFeeLineJa(),
     "",
     "人と一緒に新しいことを楽しみながら学ぶ。",
     "Cultural exchange meetup in Tokyo — beginners welcome.",
@@ -148,6 +155,7 @@ function parsePlannedEvent(page: PageObjectResponse): PlannedEvent {
     date,
     time,
     memo,
+    feeYen: DEFAULT_EVENT_FEE_YEN,
     meetupSent: getCheckbox(page.properties, EVENT_SCHEDULE_PROPERTIES.meetupSent),
     instagramSent: getCheckbox(page.properties, EVENT_SCHEDULE_PROPERTIES.instagramSent),
     sentAt: getDate(page.properties, EVENT_SCHEDULE_PROPERTIES.sentAt).start,

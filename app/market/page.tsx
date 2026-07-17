@@ -159,6 +159,7 @@ export default function MarketPage() {
                     {formatDate(event.date)}
                     {event.time ? ` · ${event.time}` : ""}
                     {event.cafe ? ` · ${event.cafe}` : ""}
+                    {` · ¥${event.feeYen.toLocaleString("en-US")}`}
                   </p>
                 </div>
                 <a
