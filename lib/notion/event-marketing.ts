@@ -8,8 +8,11 @@ import { getNotionClient, getEventScheduleDatabaseId } from "./client";
 import {
   getCheckbox,
   getDate,
+  getNumber,
   getRichText,
+  getSelect,
   getTitle,
+  getUrl,
 } from "./parse-page-properties";
 
 export const EVENT_SCHEDULE_PROPERTIES = {
@@ -18,6 +21,16 @@ export const EVENT_SCHEDULE_PROPERTIES = {
   date: "日付",
   time: "時間",
   memo: "メモ",
+  feeYen: "参加費",
+  summary: "企画概要",
+  audience: "対象者",
+  capacity: "定員",
+  meetupUrl: "Meetup URL",
+  instagramUrl: "Instagram URL",
+  venueNote: "場所補足",
+  flow: "当日の流れ",
+  notesForGuests: "持ちもの・注意",
+  language: "言語",
   meetupSent: "Meetup文担当へ送付",
   instagramSent: "インスタ文担当へ送付",
   sentAt: "送付日",
@@ -31,6 +44,15 @@ export type PlannedEvent = {
   time: string | null;
   memo: string | null;
   feeYen: number;
+  summary: string | null;
+  audience: string | null;
+  capacity: number | null;
+  meetupUrl: string | null;
+  instagramUrl: string | null;
+  venueNote: string | null;
+  flow: string | null;
+  notesForGuests: string | null;
+  language: string | null;
   meetupSent: boolean;
   instagramSent: boolean;
   sentAt: string | null;
@@ -84,31 +106,64 @@ function formatDateLabelJa(dateValue: string | null): string {
   }).format(date);
 }
 
-export function buildMeetupCopy(input: {
+function languageLineEn(language: string | null): string | null {
+  if (!language) return null;
+  if (language === "英語メイン") return "Language: English-friendly";
+  if (language === "日本語メイン") return "Language: Japanese-friendly";
+  return "Language: bilingual (EN / JP)";
+}
+
+function languageLineJa(language: string | null): string | null {
+  if (!language) return null;
+  return `言語: ${language}`;
+}
+
+type CopyInput = {
   title: string;
   cafe: string | null;
   date: string | null;
   time: string | null;
   memo: string | null;
-}): string {
+  feeYen: number;
+  summary: string | null;
+  audience: string | null;
+  capacity: number | null;
+  meetupUrl: string | null;
+  venueNote: string | null;
+  flow: string | null;
+  notesForGuests: string | null;
+  language: string | null;
+};
+
+export function buildMeetupCopy(input: CopyInput): string {
   const title = input.title.trim() || "ICL Meetup";
   const when = `${formatDateLabel(input.date)}${input.time ? ` · ${input.time}` : ""}`;
   const where = input.cafe?.trim() || "Tokyo (details in Meetup)";
-  const notes = input.memo?.trim();
+  const pitch =
+    input.summary?.trim() ||
+    "Enjoy learning something new with other people — cultural exchange in Tokyo.";
+  const audience =
+    input.audience?.trim() || "Beginners welcome. No long speeches — just easy conversation.";
 
   return [
     `${title} | International Community Lab (ICL)`,
     "",
-    "Enjoy learning something new with other people — cultural exchange in Tokyo.",
+    pitch,
     "",
     `When: ${when} (JST)`,
     `Where: ${where}`,
-    formatEventFeeLineEn(),
+    input.venueNote?.trim() ? `Meeting point: ${input.venueNote.trim()}` : null,
+    formatEventFeeLineEn(input.feeYen),
+    input.capacity != null ? `Capacity: about ${input.capacity}` : null,
+    languageLineEn(input.language),
     "",
-    "Come say hi, practice languages, and meet people from different backgrounds.",
-    "Beginners welcome. No long speeches — just easy conversation.",
-    notes ? "" : null,
-    notes ? `Note: ${notes}` : null,
+    audience,
+    input.flow?.trim() ? "" : null,
+    input.flow?.trim() ? `Flow: ${input.flow.trim()}` : null,
+    input.notesForGuests?.trim() ? `Please note: ${input.notesForGuests.trim()}` : null,
+    input.memo?.trim() ? `Note: ${input.memo.trim()}` : null,
+    input.meetupUrl?.trim() ? "" : null,
+    input.meetupUrl?.trim() ? `RSVP: ${input.meetupUrl.trim()}` : null,
     "",
     "Hosted by International Community Lab (ICL) · Tokyo",
   ]
@@ -116,28 +171,33 @@ export function buildMeetupCopy(input: {
     .join("\n");
 }
 
-export function buildInstagramCopy(input: {
-  title: string;
-  cafe: string | null;
-  date: string | null;
-  time: string | null;
-}): string {
+export function buildInstagramCopy(input: CopyInput): string {
   const title = input.title.trim() || "ICL Meetup";
   const when = `${formatDateLabelJa(input.date)}${input.time ? ` ${input.time}` : ""}`;
   const where = input.cafe?.trim() || "Tokyo";
+  const pitch =
+    input.summary?.trim() ||
+    "人と一緒に新しいことを楽しみながら学ぶ。Cultural exchange meetup in Tokyo.";
+  const rsvp = input.meetupUrl?.trim()
+    ? `Details / RSVP → ${input.meetupUrl.trim()}`
+    : "Details / RSVP → link in bio or Meetup";
 
   return [
     `${title}`,
     `${when} @ ${where}`,
-    formatEventFeeLineJa(),
+    formatEventFeeLineJa(input.feeYen),
+    languageLineJa(input.language),
     "",
-    "人と一緒に新しいことを楽しみながら学ぶ。",
-    "Cultural exchange meetup in Tokyo — beginners welcome.",
+    pitch,
+    input.audience?.trim() ? input.audience.trim() : "Beginners welcome.",
+    input.venueNote?.trim() ? `待ち合わせ: ${input.venueNote.trim()}` : null,
     "",
-    "Details / RSVP → link in bio or Meetup",
+    rsvp,
     "",
     "#icl_tokyo #tokyomeetup #tokyoexpat #languageexchange #culturalexchange #新宿 #渋谷",
-  ].join("\n");
+  ]
+    .filter((line) => line !== null)
+    .join("\n");
 }
 
 function parsePlannedEvent(page: PageObjectResponse): PlannedEvent {
@@ -146,7 +206,33 @@ function parsePlannedEvent(page: PageObjectResponse): PlannedEvent {
   const date = getDate(page.properties, EVENT_SCHEDULE_PROPERTIES.date).start;
   const time = getRichText(page.properties, EVENT_SCHEDULE_PROPERTIES.time);
   const memo = getRichText(page.properties, EVENT_SCHEDULE_PROPERTIES.memo);
-  const input = { title, cafe, date, time, memo };
+  const feeYen =
+    getNumber(page.properties, EVENT_SCHEDULE_PROPERTIES.feeYen) ?? DEFAULT_EVENT_FEE_YEN;
+  const summary = getRichText(page.properties, EVENT_SCHEDULE_PROPERTIES.summary);
+  const audience = getRichText(page.properties, EVENT_SCHEDULE_PROPERTIES.audience);
+  const capacity = getNumber(page.properties, EVENT_SCHEDULE_PROPERTIES.capacity);
+  const meetupUrl = getUrl(page.properties, EVENT_SCHEDULE_PROPERTIES.meetupUrl);
+  const instagramUrl = getUrl(page.properties, EVENT_SCHEDULE_PROPERTIES.instagramUrl);
+  const venueNote = getRichText(page.properties, EVENT_SCHEDULE_PROPERTIES.venueNote);
+  const flow = getRichText(page.properties, EVENT_SCHEDULE_PROPERTIES.flow);
+  const notesForGuests = getRichText(page.properties, EVENT_SCHEDULE_PROPERTIES.notesForGuests);
+  const language = getSelect(page.properties, EVENT_SCHEDULE_PROPERTIES.language);
+  const input: CopyInput = {
+    title,
+    cafe,
+    date,
+    time,
+    memo,
+    feeYen,
+    summary,
+    audience,
+    capacity,
+    meetupUrl,
+    venueNote,
+    flow,
+    notesForGuests,
+    language,
+  };
 
   return {
     id: page.id,
@@ -155,7 +241,16 @@ function parsePlannedEvent(page: PageObjectResponse): PlannedEvent {
     date,
     time,
     memo,
-    feeYen: DEFAULT_EVENT_FEE_YEN,
+    feeYen,
+    summary,
+    audience,
+    capacity,
+    meetupUrl,
+    instagramUrl,
+    venueNote,
+    flow,
+    notesForGuests,
+    language,
     meetupSent: getCheckbox(page.properties, EVENT_SCHEDULE_PROPERTIES.meetupSent),
     instagramSent: getCheckbox(page.properties, EVENT_SCHEDULE_PROPERTIES.instagramSent),
     sentAt: getDate(page.properties, EVENT_SCHEDULE_PROPERTIES.sentAt).start,

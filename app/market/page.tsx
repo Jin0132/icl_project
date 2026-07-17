@@ -160,7 +160,23 @@ export default function MarketPage() {
                     {event.time ? ` · ${event.time}` : ""}
                     {event.cafe ? ` · ${event.cafe}` : ""}
                     {` · ¥${event.feeYen.toLocaleString("en-US")}`}
+                    {event.capacity != null
+                      ? ` · ${enJa(`cap ${event.capacity}`, `定員${event.capacity}`)}`
+                      : ""}
                   </p>
+                  {event.summary && (
+                    <p className="mt-2 text-sm text-slate-600">{event.summary}</p>
+                  )}
+                  {event.meetupUrl && (
+                    <a
+                      href={event.meetupUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="mt-1 inline-block text-xs text-blue-600 hover:text-blue-700"
+                    >
+                      Meetup URL →
+                    </a>
+                  )}
                 </div>
                 <a
                   href={event.url}

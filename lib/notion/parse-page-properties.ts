@@ -57,6 +57,32 @@ export function getCheckbox(
   return false;
 }
 
+export function getNumber(
+  properties: PageObjectResponse["properties"],
+  propertyName: string,
+): number | null {
+  const property = properties[propertyName];
+
+  if (property?.type === "number" && typeof property.number === "number") {
+    return property.number;
+  }
+
+  return null;
+}
+
+export function getUrl(
+  properties: PageObjectResponse["properties"],
+  propertyName: string,
+): string | null {
+  const property = properties[propertyName];
+
+  if (property?.type === "url" && property.url) {
+    return property.url;
+  }
+
+  return null;
+}
+
 export function getSelect(
   properties: PageObjectResponse["properties"],
   propertyName: string,

@@ -50,8 +50,8 @@ export default async function PublicEventsPage() {
           </h1>
           <p className="mx-auto mt-3 max-w-lg text-sm text-slate-600">
             {enJa(
-              "Cultural exchange meetups in Tokyo. RSVP on Meetup or Instagram — capacity is managed on each platform.",
-              "東京での文化交流ミートアップ。申込・定員は Meetup / Instagram それぞれで管理しています。",
+              "Cultural exchange meetups in Tokyo. RSVP on Meetup — capacity is managed on each platform.",
+              "東京での文化交流ミートアップ。申込・定員は Meetup などで管理しています。",
             )}
           </p>
         </header>
@@ -80,9 +80,12 @@ export default async function PublicEventsPage() {
               <h2 className="text-lg font-semibold text-slate-800">
                 {event.title || enJa("ICL Meetup", "ICL ミートアップ")}
               </h2>
+              {event.summary && (
+                <p className="mt-2 text-sm leading-relaxed text-slate-600">{event.summary}</p>
+              )}
               <dl className="mt-4 space-y-2 text-sm text-slate-600">
                 <div className="flex gap-2">
-                  <dt className="w-20 shrink-0 font-medium text-slate-500">
+                  <dt className="w-24 shrink-0 font-medium text-slate-500">
                     {enJa("When", "日時")}
                   </dt>
                   <dd>
@@ -92,14 +95,21 @@ export default async function PublicEventsPage() {
                 </div>
                 {event.cafe && (
                   <div className="flex gap-2">
-                    <dt className="w-20 shrink-0 font-medium text-slate-500">
+                    <dt className="w-24 shrink-0 font-medium text-slate-500">
                       {enJa("Where", "場所")}
                     </dt>
-                    <dd>{event.cafe}</dd>
+                    <dd>
+                      {event.cafe}
+                      {event.venueNote ? (
+                        <span className="mt-0.5 block text-xs text-slate-400">
+                          {event.venueNote}
+                        </span>
+                      ) : null}
+                    </dd>
                   </div>
                 )}
                 <div className="flex gap-2">
-                  <dt className="w-20 shrink-0 font-medium text-slate-500">
+                  <dt className="w-24 shrink-0 font-medium text-slate-500">
                     {enJa("Fee", "参加費")}
                   </dt>
                   <dd>
@@ -107,11 +117,58 @@ export default async function PublicEventsPage() {
                     {enJa(" + 1 drink", "（＋ドリンク1杯）")}
                   </dd>
                 </div>
+                {event.language && (
+                  <div className="flex gap-2">
+                    <dt className="w-24 shrink-0 font-medium text-slate-500">
+                      {enJa("Language", "言語")}
+                    </dt>
+                    <dd>{event.language}</dd>
+                  </div>
+                )}
+                {event.audience && (
+                  <div className="flex gap-2">
+                    <dt className="w-24 shrink-0 font-medium text-slate-500">
+                      {enJa("For", "対象")}
+                    </dt>
+                    <dd>{event.audience}</dd>
+                  </div>
+                )}
+                {event.capacity != null && (
+                  <div className="flex gap-2">
+                    <dt className="w-24 shrink-0 font-medium text-slate-500">
+                      {enJa("Capacity", "定員")}
+                    </dt>
+                    <dd>
+                      {enJa(`About ${event.capacity}`, `約 ${event.capacity} 名`)}
+                    </dd>
+                  </div>
+                )}
+                {event.flow && (
+                  <div className="flex gap-2">
+                    <dt className="w-24 shrink-0 font-medium text-slate-500">
+                      {enJa("Flow", "流れ")}
+                    </dt>
+                    <dd>{event.flow}</dd>
+                  </div>
+                )}
+                {event.notesForGuests && (
+                  <div className="flex gap-2">
+                    <dt className="w-24 shrink-0 font-medium text-slate-500">
+                      {enJa("Notes", "注意")}
+                    </dt>
+                    <dd>{event.notesForGuests}</dd>
+                  </div>
+                )}
               </dl>
-              {event.memo && (
-                <p className="mt-4 rounded-xl border border-slate-100 bg-slate-50 px-4 py-3 text-sm text-slate-600">
-                  {event.memo}
-                </p>
+              {event.meetupUrl && (
+                <a
+                  href={event.meetupUrl}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="mt-5 inline-flex rounded-full bg-slate-800 px-4 py-2 text-sm font-medium text-white hover:bg-slate-700"
+                >
+                  {enJa("RSVP on Meetup", "Meetupで申し込む")} →
+                </a>
               )}
             </article>
           ))}
