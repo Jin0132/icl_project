@@ -112,6 +112,7 @@ export function buildDayTimeSlots(dateKey: string): HubTimeSlot[] {
 export function buildMonthGrid(month: Date) {
   const year = month.getFullYear();
   const monthIndex = month.getMonth();
+  // Local calendar date — weekday 0=Sun matches WEEKDAYS ["日","月",…]
   const firstDay = new Date(year, monthIndex, 1);
   const lastDay = new Date(year, monthIndex + 1, 0);
   const startOffset = firstDay.getDay();
@@ -124,7 +125,12 @@ export function buildMonthGrid(month: Date) {
       ? `${year}-${String(monthIndex + 1).padStart(2, "0")}-${String(dayNumber).padStart(2, "0")}`
       : "";
 
-    return { dateKey, dayNumber: inMonth ? dayNumber : 0, inMonth };
+    return {
+      index,
+      dateKey,
+      dayNumber: inMonth ? dayNumber : null,
+      inMonth,
+    };
   });
 }
 

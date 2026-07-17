@@ -173,8 +173,8 @@ function HubPersonalFreeInput({
 
         <div className="mt-1 grid grid-cols-7 gap-1">
           {grid.map((cell) => {
-            if (!cell.inMonth) {
-              return <div key={`empty-${cell.dayNumber}`} className="h-10" />;
+            if (!cell.inMonth || cell.dayNumber == null) {
+              return <div key={`pad-${cell.index}`} className="h-10" aria-hidden />;
             }
 
             const summary = heatByDay.get(cell.dateKey);
@@ -401,8 +401,8 @@ function HubTeamFreeHeatmap({
 
         <div className="mt-1 grid grid-cols-7 gap-1">
           {grid.map((cell) => {
-            if (!cell.inMonth) {
-              return <div key={`empty-${cell.dayNumber}`} className="h-12" />;
+            if (!cell.inMonth || cell.dayNumber == null) {
+              return <div key={`pad-${cell.index}`} className="h-12" aria-hidden />;
             }
 
             const summary = getDayHeatSummary(cell.dateKey, monthFree);
