@@ -61,3 +61,11 @@ export function getMeetingMinutesParentId(): string {
     "39876122-ab9f-80b7-bc8b-d4155bc5d50c"
   );
 }
+
+/** イベント日程・カフェ確定表（マーケ投稿用） */
+export function getEventScheduleDatabaseId(): string {
+  return (
+    process.env.NOTION_EVENT_SCHEDULE_DATABASE_ID ??
+    "bc3bd5c6-1f1a-4d9c-a946-9f37b250a350"
+  );
+}

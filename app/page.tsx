@@ -50,10 +50,10 @@ const DESTINATIONS: HubDestination[] = [
     href: "/market",
     icon: "📣",
     title: enJa("Market", "マーケティング"),
-    descriptionEn: "Marketing and communications",
-    descriptionJa: "マーケ施策・広報",
-    available: false,
-    accent: "border-l-orange-500",
+    descriptionEn: "Generate Meetup / Instagram copy and mark posts as sent",
+    descriptionJa: "Meetup / Instagram 文案の生成と送付済み管理",
+    available: true,
+    accent: "border-l-orange-500 hover:border-orange-200",
   },
 ];
 
