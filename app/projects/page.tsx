@@ -709,6 +709,12 @@ export default function DashboardPage() {
           <p className="mt-2 text-sm text-slate-500">
             {enJa("Project & task management", "プロジェクト・課題管理")}
           </p>
+          <p className="mx-auto mt-2 max-w-md text-xs text-slate-400">
+            {enJa(
+              "Scroll to bottom → type task → press Add to save to Notion.",
+              "下までスクロール → タスク入力 →「追加」で Notion に保存。",
+            )}
+          </p>
           <StatusLabel state={loadState} />
 
           <div className="mx-auto mt-5 flex max-w-md items-center justify-center gap-0">
@@ -786,17 +792,24 @@ export default function DashboardPage() {
               <span>📊</span>
             </div>
 
-            <form onSubmit={handleAddTask} className="relative">
-              <div className="rounded-full bg-gradient-to-r from-blue-300/40 via-white to-red-300/40 p-[2px] shadow-[0_0_24px_rgba(59,130,246,0.12),0_0_24px_rgba(248,113,113,0.12)]">
+            <form onSubmit={handleAddTask} className="relative flex flex-col gap-3 sm:flex-row sm:items-center">
+              <div className="min-w-0 flex-1 rounded-full bg-gradient-to-r from-blue-300/40 via-white to-red-300/40 p-[2px] shadow-[0_0_24px_rgba(59,130,246,0.12),0_0_24px_rgba(248,113,113,0.12)]">
                 <input
                   type="text"
                   value={draftTitle}
                   onChange={(event) => setDraftTitle(event.target.value)}
-                  placeholder="Quickly add a task..."
+                  placeholder={enJa("Quickly add a task...", "タスクを入力...")}
                   disabled={isAddingTask || loadState !== "success"}
                   className="w-full rounded-full border-0 bg-white px-6 py-4 text-sm text-slate-700 placeholder:text-slate-400 outline-none focus:ring-2 focus:ring-blue-100/80 disabled:cursor-wait disabled:opacity-60"
                 />
               </div>
+              <button
+                type="submit"
+                disabled={isAddingTask || loadState !== "success" || !draftTitle.trim()}
+                className="shrink-0 rounded-full bg-slate-800 px-6 py-4 text-sm font-medium text-white transition-colors hover:bg-slate-700 disabled:cursor-not-allowed disabled:opacity-50 sm:py-3.5"
+              >
+                {isAddingTask ? enJa("Adding…", "追加中…") : enJa("Add", "追加")}
+              </button>
             </form>
 
             {formMessage && (

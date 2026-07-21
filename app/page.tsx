@@ -23,17 +23,26 @@ const DESTINATIONS: HubDestination[] = [
     href: "/projects",
     icon: "📊",
     title: enJa("Project Hub", "課題・プロジェクト"),
-    descriptionEn: "Weekly tasks, meeting agenda, and project tracker",
-    descriptionJa: "今週のタスク、議題、プロジェクト一覧の管理",
+    descriptionEn: "Add tasks (bottom Add button), weekly due list, meeting agenda",
+    descriptionJa: "タスク追加（下の「追加」）、今週期限、議題",
     available: true,
     accent: "border-l-blue-500 hover:border-blue-200",
+  },
+  {
+    href: "/market",
+    icon: "📣",
+    title: enJa("Market", "マーケティング"),
+    descriptionEn: "Create events, copy Meetup / IG text, mark complete when done",
+    descriptionJa: "イベント作成、文案コピー、投稿後「完了」",
+    available: true,
+    accent: "border-l-orange-500 hover:border-orange-200",
   },
   {
     href: "/schedule",
     icon: "📅",
     title: enJa("Team Schedule", "予定調整"),
-    descriptionEn: "Poll candidate dates, mark availability, view confirmed events",
-    descriptionJa: "候補日の調整、参加可能の回答、確定カレンダー",
+    descriptionEn: "Poll candidate dates, mark availability (ops team only)",
+    descriptionJa: "候補日の出欠回答（運営メンバー向け）",
     available: true,
     accent: "border-l-emerald-500 hover:border-emerald-200",
   },
@@ -41,21 +50,39 @@ const DESTINATIONS: HubDestination[] = [
     href: "/ops",
     icon: "👥",
     title: enJa("Team & Operations", "メンバー・運営"),
-    descriptionEn: "Member and operations management",
-    descriptionJa: "メンバー管理・運営",
+    descriptionEn: "Use Notion Team & Ops for now",
+    descriptionJa: "当面は Notion の Team & Ops を利用",
     available: false,
     accent: "border-l-violet-500",
   },
-  {
-    href: "/market",
-    icon: "📣",
-    title: enJa("Market", "マーケティング"),
-    descriptionEn: "Generate Meetup / Instagram copy and mark posts as sent",
-    descriptionJa: "Meetup / Instagram 文案の生成と送付済み管理",
-    available: true,
-    accent: "border-l-orange-500 hover:border-orange-200",
-  },
 ];
+
+const QUICK_GUIDE = [
+  {
+    wantEn: "Add a task",
+    wantJa: "タスクを追加",
+    whereEn: "Projects → Add button at bottom",
+    whereJa: "Projects → 下の「追加」",
+  },
+  {
+    wantEn: "Post next event",
+    wantJa: "イベント告知",
+    whereEn: "Market → create or open event → copy text → Complete",
+    whereJa: "Market → 作成 or 開く → 文案コピー → 完了",
+  },
+  {
+    wantEn: "Team MTG & free slots",
+    wantJa: "運営MTG・空き",
+    whereEn: "Calendar above (Phase 1–3)",
+    whereJa: "上のカレンダー（Phase 1–3）",
+  },
+  {
+    wantEn: "After event — numbers",
+    wantJa: "開催後の数字",
+    whereEn: "Notion → Event Log",
+    whereJa: "Notion → Event Log",
+  },
+] as const;
 
 function HubCard({ destination }: { destination: HubDestination }) {
   const content = (
@@ -119,10 +146,10 @@ export default async function HubPage() {
             ICL Hub
           </h1>
           <p className="mx-auto mt-3 max-w-xl text-sm text-slate-600">
-            Choose a workspace to open. Project tasks and team scheduling live on separate pages.
+            Daily ops start here. Notion = records & playbooks (see guide below).
           </p>
           <p className="mx-auto mt-1 max-w-xl text-xs text-slate-400">
-            見たい情報を選んでください。課題管理と予定調整はそれぞれ専用ページで操作できます。
+            日常作業はここから。記録・手順は Notion（下の早見表参照）。
           </p>
 
           <div className="mx-auto mt-5 flex max-w-md items-center justify-center gap-0">
@@ -133,6 +160,42 @@ export default async function HubPage() {
         </header>
 
         <HubCalendar initialConfirmed={confirmedEvents} />
+
+        <section
+          className={`mb-8 rounded-2xl border border-slate-200 bg-white p-5 sm:p-6 ${CARD_SHADOW}`}
+          aria-label={enJa("Where to look", "何を見るか")}
+        >
+          <h2 className="text-sm font-semibold tracking-wide text-slate-700 uppercase">
+            {enJa("Where to look", "何を見るか")}
+          </h2>
+          <p className="mt-1 text-xs text-slate-400">
+            {enJa("Quick map — full guide in Notion ICL Master", "早見表 — 詳細は Notion ICL Master")}
+          </p>
+          <div className="mt-4 overflow-x-auto">
+            <table className="w-full min-w-[320px] text-left text-sm">
+              <thead>
+                <tr className="border-b border-slate-100 text-xs text-slate-400">
+                  <th className="pb-2 pr-4 font-medium">{enJa("I want to…", "やりたいこと")}</th>
+                  <th className="pb-2 font-medium">{enJa("Open", "開く場所")}</th>
+                </tr>
+              </thead>
+              <tbody className="text-slate-700">
+                {QUICK_GUIDE.map((row) => (
+                  <tr key={row.wantEn} className="border-b border-slate-50 last:border-0">
+                    <td className="py-2.5 pr-4 align-top">
+                      <span className="block">{row.wantEn}</span>
+                      <span className="block text-xs text-slate-400">{row.wantJa}</span>
+                    </td>
+                    <td className="py-2.5 align-top">
+                      <span className="block">{row.whereEn}</span>
+                      <span className="block text-xs text-slate-400">{row.whereJa}</span>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </section>
 
         <div className="grid gap-4 sm:grid-cols-2">
           {DESTINATIONS.map((destination) => (
