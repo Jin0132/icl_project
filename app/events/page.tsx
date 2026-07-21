@@ -33,7 +33,7 @@ export default async function PublicEventsPage() {
   let error: string | null = null;
 
   try {
-    events = await fetchPlannedEvents();
+    events = await fetchPlannedEvents({ includeDone: true });
   } catch (e) {
     error = e instanceof Error ? e.message : "Failed to load events";
   }

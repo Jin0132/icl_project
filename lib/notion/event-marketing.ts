@@ -34,6 +34,7 @@ export const EVENT_SCHEDULE_PROPERTIES = {
   meetupSent: "Meetup文担当へ送付",
   instagramSent: "インスタ文担当へ送付",
   sentAt: "送付日",
+  marketingDone: "マーケ完了",
 } as const;
 
 export type PlannedEvent = {
@@ -55,10 +56,25 @@ export type PlannedEvent = {
   language: string | null;
   meetupSent: boolean;
   instagramSent: boolean;
+  marketingDone: boolean;
   sentAt: string | null;
   url: string;
   meetupCopy: string;
   instagramCopy: string;
+};
+
+export type CreatePlannedEventInput = {
+  title: string;
+  date: string;
+  time?: string | null;
+  cafe?: string | null;
+  summary?: string | null;
+  feeYen?: number | null;
+  capacity?: number | null;
+  language?: string | null;
+  audience?: string | null;
+  venueNote?: string | null;
+  meetupUrl?: string | null;
 };
 
 const dataSourceIdCache = new Map<string, string>();
@@ -253,6 +269,7 @@ function parsePlannedEvent(page: PageObjectResponse): PlannedEvent {
     language,
     meetupSent: getCheckbox(page.properties, EVENT_SCHEDULE_PROPERTIES.meetupSent),
     instagramSent: getCheckbox(page.properties, EVENT_SCHEDULE_PROPERTIES.instagramSent),
+    marketingDone: getCheckbox(page.properties, EVENT_SCHEDULE_PROPERTIES.marketingDone),
     sentAt: getDate(page.properties, EVENT_SCHEDULE_PROPERTIES.sentAt).start,
     url: page.url,
     meetupCopy: buildMeetupCopy(input),
@@ -260,7 +277,27 @@ function parsePlannedEvent(page: PageObjectResponse): PlannedEvent {
   };
 }
 
-export async function fetchPlannedEvents(): Promise<PlannedEvent[]> {
+function todayKeyJst(): string {
+  return new Intl.DateTimeFormat("sv-SE", {
+    timeZone: "Asia/Tokyo",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date());
+}
+
+function richTextProperty(value: string | null | undefined) {
+  const text = value?.trim() ?? "";
+  return {
+    rich_text: text
+      ? [{ type: "text" as const, text: { content: text.slice(0, 2000) } }]
+      : [],
+  };
+}
+
+export async function fetchPlannedEvents(options?: {
+  includeDone?: boolean;
+}): Promise<PlannedEvent[]> {
   const notion = getNotionClient();
   const databaseId = getEventScheduleDatabaseId();
   const dataSourceId = await resolveDataSourceId(databaseId);
@@ -281,17 +318,69 @@ export async function fetchPlannedEvents(): Promise<PlannedEvent[]> {
     cursor = response.has_more ? (response.next_cursor ?? undefined) : undefined;
   } while (cursor);
 
-  const todayKey = new Intl.DateTimeFormat("sv-SE", {
-    timeZone: "Asia/Tokyo",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(new Date());
+  const todayKey = todayKeyJst();
+  const includeDone = options?.includeDone ?? false;
 
   return results
     .map(parsePlannedEvent)
     .filter((event) => !event.date || event.date.slice(0, 10) >= todayKey)
+    .filter((event) => includeDone || !event.marketingDone)
     .sort((a, b) => (a.date ?? "").localeCompare(b.date ?? ""));
+}
+
+export async function createPlannedEvent(
+  input: CreatePlannedEventInput,
+): Promise<PlannedEvent> {
+  const title = input.title.trim();
+  const date = input.date.trim().slice(0, 10);
+  if (!title) throw new Error("title is required");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date)) {
+    throw new Error("date must be YYYY-MM-DD");
+  }
+
+  const notion = getNotionClient();
+  const databaseId = getEventScheduleDatabaseId();
+  const feeYen = input.feeYen ?? DEFAULT_EVENT_FEE_YEN;
+
+  const page = await notion.pages.create({
+    parent: { database_id: databaseId },
+    properties: {
+      [EVENT_SCHEDULE_PROPERTIES.title]: {
+        title: [{ type: "text", text: { content: title.slice(0, 200) } }],
+      },
+      [EVENT_SCHEDULE_PROPERTIES.date]: {
+        date: { start: date },
+      },
+      [EVENT_SCHEDULE_PROPERTIES.time]: richTextProperty(input.time),
+      [EVENT_SCHEDULE_PROPERTIES.cafe]: richTextProperty(input.cafe),
+      [EVENT_SCHEDULE_PROPERTIES.summary]: richTextProperty(input.summary),
+      [EVENT_SCHEDULE_PROPERTIES.audience]: richTextProperty(input.audience),
+      [EVENT_SCHEDULE_PROPERTIES.venueNote]: richTextProperty(input.venueNote),
+      [EVENT_SCHEDULE_PROPERTIES.feeYen]: { number: feeYen },
+      ...(input.capacity != null
+        ? { [EVENT_SCHEDULE_PROPERTIES.capacity]: { number: input.capacity } }
+        : {}),
+      ...(input.language
+        ? {
+            [EVENT_SCHEDULE_PROPERTIES.language]: {
+              select: { name: input.language },
+            },
+          }
+        : {}),
+      ...(input.meetupUrl?.trim()
+        ? { [EVENT_SCHEDULE_PROPERTIES.meetupUrl]: { url: input.meetupUrl.trim() } }
+        : {}),
+      [EVENT_SCHEDULE_PROPERTIES.marketingDone]: { checkbox: false },
+      [EVENT_SCHEDULE_PROPERTIES.meetupSent]: { checkbox: false },
+      [EVENT_SCHEDULE_PROPERTIES.instagramSent]: { checkbox: false },
+    },
+  });
+
+  if (!isFullPage(page)) {
+    throw new Error("Created event page is not accessible");
+  }
+
+  return parsePlannedEvent(page);
 }
 
 export async function markMarketingSent(input: {
@@ -299,12 +388,7 @@ export async function markMarketingSent(input: {
   channel: "meetup" | "instagram";
 }): Promise<PlannedEvent> {
   const notion = getNotionClient();
-  const todayKey = new Intl.DateTimeFormat("sv-SE", {
-    timeZone: "Asia/Tokyo",
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(new Date());
+  const todayKey = todayKeyJst();
 
   const checkboxProperty =
     input.channel === "meetup"
@@ -318,6 +402,32 @@ export async function markMarketingSent(input: {
       [EVENT_SCHEDULE_PROPERTIES.sentAt]: {
         date: { start: todayKey },
       },
+    },
+  });
+
+  if (!isFullPage(page)) {
+    throw new Error("Updated event page is not accessible");
+  }
+
+  return parsePlannedEvent(page);
+}
+
+export async function setMarketingDone(input: {
+  eventId: string;
+  done: boolean;
+}): Promise<PlannedEvent> {
+  const notion = getNotionClient();
+  const page = await notion.pages.update({
+    page_id: input.eventId,
+    properties: {
+      [EVENT_SCHEDULE_PROPERTIES.marketingDone]: { checkbox: input.done },
+      ...(input.done
+        ? {
+            [EVENT_SCHEDULE_PROPERTIES.sentAt]: {
+              date: { start: todayKeyJst() },
+            },
+          }
+        : {}),
     },
   });
 
